@@ -190,45 +190,24 @@
 
 		isLoadingClients = true;
 		try {
-			if (type === 'customer') {
-				const res = await apiFetch<any>('api/sales-entries/heads', {
-					params: {
-						salesmanId,
-						page: 1,
-						pageSize: 500
-					}
-				});
+			const res = await apiFetch<any>(`api/sales-entries/salesmen/${salesmanId}/clients`, {
+				params: {
+					type,
+					page: 1,
+					pageSize: 500
+				}
+			});
 
-				clients = (res?.items || []).map((item: any) => ({
-					id: item.id,
-					name: `${item.firstName || ''} ${item.lastName || ''}`.trim() || item.name || 'Customer',
-					phone: item.mobileNo || item.phone,
-					email: item.email,
-					clientType: 'customer',
-					wallet: Number(item.wallet ?? 0),
-					salesmanId: item.salesmanId,
-					status: item.status
-				}));
-			} else {
-				const res = await apiFetch<any>(`api/sales-entries/salesmen/${salesmanId}/clients`, {
-					params: {
-						type: 'agent',
-						page: 1,
-						pageSize: 500
-					}
-				});
-
-				clients = (res?.items || []).map((item: any) => ({
-					id: item.id,
-					name: item.name,
-					phone: item.phone,
-					email: item.email,
-					clientType: item.clientType,
-					wallet: Number(item.wallet ?? 0),
-					salesmanId: item.salesmanId,
-					status: item.status
-				}));
-			}
+			clients = (res?.items || []).map((item: any) => ({
+				id: item.id,
+				name: item.name || `${item.firstName || ''} ${item.lastName || ''}`.trim() || (type === 'customer' ? 'Customer' : 'Agent'),
+				phone: item.phone || item.mobileNo || item.phoneNo,
+				email: item.email || item.emailId,
+				clientType: type,
+				wallet: Number(item.wallet ?? 0),
+				salesmanId: item.salesmanId,
+				status: item.status
+			}));
 
 			// Reset selected client if not found in new list
 			if (!clients.some((c) => String(c.id) === selectedClientId)) {
@@ -267,6 +246,13 @@
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files[0]) {
 			const file = target.files[0];
+			if (file.size > 5 * 1024 * 1024) {
+				toast.error('Payment proof file size must be under 5 MB.');
+				target.value = '';
+				paymentProofFile = null;
+				paymentProof = null;
+				return;
+			}
 			paymentProofFile = file;
 			const reader = new FileReader();
 			reader.onload = (event) => {
