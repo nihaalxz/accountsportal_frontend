@@ -1,0 +1,14 @@
+# Phase 2 Threat Model
+
+This document outlines key threat vectors targeting the Texas Accounts Portal frontend and the respective mitigations.
+
+## Threat Analysis
+
+| Threat ID | Threat Vector                                                                                                               | Risk Level | Mitigation Strategy                                                                                                                                            | Status          |
+| :-------- | :-------------------------------------------------------------------------------------------------------------------------- | :--------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------- |
+| **T-001** | **XSS (Cross-Site Scripting)**: Injecting scripts via transaction descriptions or reference names.                          | High       | Svelte 5 automatically escapes all dynamic HTML insertions in `{expression}` bindings. No `{@html}` tags are used for user-controlled inputs.                  | Fully Mitigated |
+| **T-002** | **Session Hijacking**: Stealing the refresh token to access financial endpoints.                                            | Medium     | Refresh tokens are stored in secure SameSite=Strict cookies. Access tokens are held in-memory.                                                                 | Fully Mitigated |
+| **T-003** | **Form Replays / Double Submissions**: Double-clicking "Post" leading to duplicate payments or transfers.                   | High       | Frontend generates unique UUIDv4 `Idempotency-Key` headers per operation. The submit button is immediately disabled upon click.                                | Fully Mitigated |
+| **T-004** | **Unauthenticated Route Bypass**: Directly typing `/transactions` or `/accounts` to bypass login.                           | High       | Protected routes are grouped under `(app)` folder and protected by the layout guard, which validates authentication on mount and redirects to `/login`.        | Fully Mitigated |
+| **T-005** | **Privilege Escalation (Normal Accountant performing approvals)**: Direct URL navigation or showing administrative buttons. | Medium     | Master Accountant features and pages are hidden via Svelte blocks checking `hasRole('master_accountant')`, and the pages redirect back if authorization fails. | Fully Mitigated |
+| **T-006** | **Credential Cracking**: Automated brute-force login attempts.                                                              | Medium     | Handled by backend rate-limiting policies. The frontend shows standardized ProblemDetails error feedback cleanly.                                              | Mitigated       |
