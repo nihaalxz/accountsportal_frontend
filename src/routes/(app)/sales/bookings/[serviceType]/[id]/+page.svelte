@@ -993,45 +993,60 @@
 		if (actionLoading) return;
 		if (!paySupplierId || payAmount == null || isNaN(payAmount) || payAmount < 0) return;
 		actionLoading = true;
-		try {
-			let cleanSource = (payMethod === 'credit' || payMethod === 'supplier_wallet') ? null : paySourceId;
-			if (payMethod === 'cash' && (!cleanSource || !cleanSource.startsWith('account_'))) {
-				cleanSource = cashAccounts[0] ? `account_${cashAccounts[0].id}` : null;
-			} else if ((payMethod === 'bank_transfer' || payMethod === 'bank') && (!cleanSource || !cleanSource.startsWith('bank_'))) {
-				cleanSource = banks[0] ? `bank_${banks[0].id}` : null;
-			}
 
-			if (approvingPendingPayment) {
-				await updateSupplierPayment(approvingPendingPayment.id, {
-					supplierId: paySupplierId,
-					amount: payAmount,
-					paymentMethod: payMethod,
+		// Snapshot form state before immediately closing the modal
+		const targetSupplierId = paySupplierId;
+		const targetAmount = payAmount;
+		const targetMethod = payMethod;
+		const targetRefNum = payRefNum;
+		const targetDesc = payDesc;
+		const pendingToApprove = approvingPendingPayment;
+		const idempotencyKey = payIdempotency.key;
+		const targetSupplierName = suppliersList.find((s) => s.id === targetSupplierId)?.name ?? 'Supplier';
+
+		let cleanSource = (targetMethod === 'credit' || targetMethod === 'supplier_wallet') ? null : paySourceId;
+		if (targetMethod === 'cash' && (!cleanSource || !cleanSource.startsWith('account_'))) {
+			cleanSource = cashAccounts[0] ? `account_${cashAccounts[0].id}` : null;
+		} else if ((targetMethod === 'bank_transfer' || targetMethod === 'bank') && (!cleanSource || !cleanSource.startsWith('bank_'))) {
+			cleanSource = banks[0] ? `bank_${banks[0].id}` : null;
+		}
+
+		// Close modal immediately for instant UI response
+		showPaymentModal = false;
+		approvingPendingPayment = null;
+		const toastId = toast.loading('Posting supplier payment...');
+
+		try {
+			if (pendingToApprove) {
+				await updateSupplierPayment(pendingToApprove.id, {
+					supplierId: targetSupplierId,
+					amount: targetAmount,
+					paymentMethod: targetMethod,
 					sourceAccountId: cleanSource,
-					referenceNumber: payRefNum || null,
-					description: payDesc || null
+					referenceNumber: targetRefNum || null,
+					description: targetDesc || null
 				});
-				await approveSupplierPayment(approvingPendingPayment.id);
-				toast.success('Supplier payment approved and posted successfully.');
+				await approveSupplierPayment(pendingToApprove.id);
+				toast.success('Supplier payment approved and posted successfully.', { id: toastId });
 			} else {
 				await createSupplierPayment({
-					supplierId: paySupplierId,
-					amount: payAmount,
-					paymentMethod: payMethod,
+					supplierId: targetSupplierId,
+					amount: targetAmount,
+					paymentMethod: targetMethod,
 					sourceAccountId: cleanSource,
-					referenceNumber: payRefNum || null,
+					referenceNumber: targetRefNum || null,
 					externalReference: bookingId,
 					serviceType: serviceType,
-					description: payDesc || null,
-					supplierName: suppliersList.find((s) => s.id === paySupplierId)?.name ?? 'Supplier'
-				}, payIdempotency.key);
+					description: targetDesc || null,
+					supplierName: targetSupplierName
+				}, idempotencyKey);
 				payIdempotency.retire();
-				toast.success('Supplier Payment recorded and approved successfully.');
+				toast.success('Supplier Payment recorded and approved successfully.', { id: toastId });
 			}
-			showPaymentModal = false;
-			approvingPendingPayment = null;
 			await fetchDetail(false);
 		} catch (err: any) {
-			toast.error(err.message || 'Failed to process payment.');
+			toast.error(err.message || 'Failed to process payment.', { id: toastId });
+			await fetchDetail(false);
 		} finally {
 			actionLoading = false;
 		}
