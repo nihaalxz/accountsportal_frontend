@@ -892,7 +892,7 @@
 		}
 	}
 
-	async function fetchDetail() {
+	async function fetchDetail(reloadAux = true) {
 		loading = true;
 		error = null;
 		try {
@@ -900,7 +900,9 @@
 			const res = await apiFetch<any>(`api/sales-entries/${segment}/${bookingId}`);
 			detail = res;
 
-			await Promise.all([loadCashAccounts(), loadBanks(), loadSuppliersList(), loadHeadsAndAgents(), loadSystemUsers()]);
+			if (reloadAux) {
+				await Promise.all([loadCashAccounts(), loadBanks(), loadSuppliersList(), loadHeadsAndAgents(), loadSystemUsers()]);
+			}
 		} catch (err: any) {
 			if (err?.status === 503 || err?.message?.includes('unavailable')) {
 				error = 'Sales portal service is unavailable. Please ensure the backend is running.';
@@ -1027,7 +1029,7 @@
 			}
 			showPaymentModal = false;
 			approvingPendingPayment = null;
-			await fetchDetail();
+			await fetchDetail(false);
 		} catch (err: any) {
 			toast.error(err.message || 'Failed to process payment.');
 		} finally {
