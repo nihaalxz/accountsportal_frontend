@@ -5,6 +5,7 @@
 	import { apiFetch } from '$lib/api/api-client';
 	import { currentUser, hasRole } from '$lib/stores/auth';
 	import { toast } from '$lib/stores/toast';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import MoneyDisplay from '$lib/components/MoneyDisplay.svelte';
 	import { DateDisplay } from '$lib/components';
 	import { Button } from '$lib/components/ui/button';
@@ -86,10 +87,21 @@
 
 	// Filters
 	let search = $state('');
+	let selectedSalesmanId = $state<string>('all');
+	let selectedType = $state<'all' | 'customer' | 'agent'>('all');
 	let currentPage = $state(1);
 	let pageSize = $state(25);
 	let totalCount = $state(0);
 	let totalPages = $state(1);
+
+	// Salesman Options for Searchable Select
+	const salesmanOptions = $derived([
+		{ id: 'all', name: 'All Salesmen' },
+		...salesmen.map((s) => ({
+			id: String(s.id),
+			name: s.name
+		}))
+	]);
 
 	// Edit Modal State (Master Accountant)
 	let showEditModal = $state(false);
@@ -148,13 +160,21 @@
 				params.append('search', search.trim());
 			}
 
+			if (selectedType && selectedType !== 'all') {
+				params.append('type', selectedType);
+			}
+
+			if (selectedSalesmanId && selectedSalesmanId !== 'all') {
+				params.append('salesmanId', selectedSalesmanId);
+			}
+
 			const res = await apiFetch<PagedResponse<HeadSummary>>(`api/sales-entries/heads?${params.toString()}`);
 			if (res) {
 				heads = res.items || [];
 				totalCount = res.totalCount || 0;
 				totalPages = res.totalPages || Math.ceil((res.totalCount || 0) / pageSize) || 1;
 
-				if (summaryStats.totalCount === 0 && totalCount > 0) {
+				if (summaryStats.totalCount === 0 && totalCount > 0 && selectedType === 'all' && (!selectedSalesmanId || selectedSalesmanId === 'all')) {
 					summaryStats.totalCount = totalCount;
 				}
 			}
@@ -168,8 +188,11 @@
 
 	async function fetchSummary() {
 		try {
-			const res = await apiFetch<HeadSummaryStats>('api/sales-entries/heads/summary');
-			if (res && (res.totalCount > 0 || res.customerCount > 0 || res.agentCount > 0 || res.totalWallet !== 0)) {
+			const url = selectedSalesmanId && selectedSalesmanId !== 'all'
+				? `api/sales-entries/heads/summary?salesmanId=${selectedSalesmanId}`
+				: 'api/sales-entries/heads/summary';
+			const res = await apiFetch<HeadSummaryStats>(url);
+			if (res) {
 				summaryStats = res;
 				return;
 			}
@@ -179,7 +202,11 @@
 
 		// Fallback: calculate summary stats from heads directory so KPI cards are never 0
 		try {
-			const allHeadsRes = await apiFetch<PagedResponse<HeadSummary>>('api/sales-entries/heads?page=1&pageSize=5000');
+			let fallbackUrl = 'api/sales-entries/heads?page=1&pageSize=5000';
+			if (selectedSalesmanId && selectedSalesmanId !== 'all') {
+				fallbackUrl += `&salesmanId=${selectedSalesmanId}`;
+			}
+			const allHeadsRes = await apiFetch<PagedResponse<HeadSummary>>(fallbackUrl);
 			if (allHeadsRes && allHeadsRes.items && allHeadsRes.items.length > 0) {
 				const items = allHeadsRes.items;
 				const total = allHeadsRes.totalCount > 0 ? allHeadsRes.totalCount : items.length;
@@ -194,6 +221,13 @@
 					customerCount: customers,
 					agentCount: agents,
 					totalWallet: walletSum
+				};
+			} else {
+				summaryStats = {
+					totalCount: 0,
+					customerCount: 0,
+					agentCount: 0,
+					totalWallet: 0
 				};
 			}
 		} catch (fallbackErr) {
@@ -211,6 +245,28 @@
 	}
 
 	function handleFilterChange() {
+		currentPage = 1;
+		fetchHeads();
+		fetchSummary();
+	}
+
+	function handleSalesmanChange(val: string | number) {
+		selectedSalesmanId = String(val);
+		currentPage = 1;
+		fetchHeads();
+		fetchSummary();
+	}
+
+	function handleTypeChange(type: 'all' | 'customer' | 'agent') {
+		selectedType = type;
+		currentPage = 1;
+		fetchHeads();
+	}
+
+	function resetAllFilters() {
+		search = '';
+		selectedSalesmanId = 'all';
+		selectedType = 'all';
 		currentPage = 1;
 		fetchHeads();
 		fetchSummary();
@@ -335,7 +391,20 @@
 	}
 
 	onMount(async () => {
-		await Promise.all([fetchHeads(), fetchSummary()]);
+		const qSalesman = $page.url.searchParams.get('salesmanId');
+		if (qSalesman) {
+			selectedSalesmanId = qSalesman;
+		}
+		const qType = $page.url.searchParams.get('type');
+		if (qType && ['all', 'customer', 'agent'].includes(qType.toLowerCase())) {
+			selectedType = qType.toLowerCase() as any;
+		}
+		const qSearch = $page.url.searchParams.get('search');
+		if (qSearch) {
+			search = qSearch;
+		}
+
+		await Promise.all([loadSalesmen(), fetchHeads(), fetchSummary()]);
 	});
 </script>
 
@@ -365,7 +434,7 @@
 				variant="outline"
 				size="sm"
 				class="gap-2 h-9 text-xs"
-				onclick={() => { fetchHeads(); fetchSummary(); }}
+				onclick={() => { loadSalesmen(); fetchHeads(); fetchSummary(); }}
 				disabled={loading}
 			>
 				<RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" />
@@ -436,9 +505,40 @@
 
 	<!-- Filter Controls Card -->
 	<div class="bg-card border border-border rounded-xl p-4 shadow-sm space-y-3">
-		<div>
+		<div class="flex flex-col lg:flex-row lg:items-center gap-3">
+			<!-- Client Type Segmented Tabs -->
+			<div class="inline-flex items-center p-1 bg-muted/60 border border-border rounded-lg text-xs self-start lg:self-auto shrink-0">
+				<button
+					type="button"
+					class="px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5 {selectedType === 'all' ? 'bg-background text-foreground shadow-sm font-semibold' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => handleTypeChange('all')}
+				>
+					<Users class="w-3.5 h-3.5" />
+					<span>All</span>
+					<span class="ml-1 text-[10px] px-1.5 py-0.2 rounded-full {selectedType === 'all' ? 'bg-primary/10 text-primary font-bold' : 'bg-muted text-muted-foreground'}">{overallTotalCount}</span>
+				</button>
+				<button
+					type="button"
+					class="px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5 {selectedType === 'customer' ? 'bg-background text-foreground shadow-sm font-semibold' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => handleTypeChange('customer')}
+				>
+					<User class="w-3.5 h-3.5" />
+					<span>Customers</span>
+					<span class="ml-1 text-[10px] px-1.5 py-0.2 rounded-full {selectedType === 'customer' ? 'bg-sky-500/10 text-sky-600 font-bold' : 'bg-muted text-muted-foreground'}">{customerCount}</span>
+				</button>
+				<button
+					type="button"
+					class="px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5 {selectedType === 'agent' ? 'bg-background text-foreground shadow-sm font-semibold' : 'text-muted-foreground hover:text-foreground'}"
+					onclick={() => handleTypeChange('agent')}
+				>
+					<Briefcase class="w-3.5 h-3.5" />
+					<span>Agents</span>
+					<span class="ml-1 text-[10px] px-1.5 py-0.2 rounded-full {selectedType === 'agent' ? 'bg-purple-500/10 text-purple-600 font-bold' : 'bg-muted text-muted-foreground'}">{agentCount}</span>
+				</button>
+			</div>
+
 			<!-- Search -->
-			<div class="relative">
+			<div class="relative flex-1">
 				<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
 				<Input
 					type="text"
@@ -448,28 +548,93 @@
 					class="pl-9 h-10 text-xs bg-background w-full"
 				/>
 			</div>
+
+			<!-- Salesman Filter Dropdown -->
+			<div class="w-full lg:w-64 shrink-0">
+				<SearchableSelect
+					options={salesmanOptions}
+					value={selectedSalesmanId}
+					onchange={handleSalesmanChange}
+					placeholder="Filter by salesman..."
+					searchPlaceholder="Search salesmen..."
+				/>
+			</div>
 		</div>
 
 		<!-- Active Filters Indicator -->
-		<div class="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-border/50">
-			<div class="flex items-center gap-2">
+		<div class="flex flex-wrap items-center justify-between text-xs text-muted-foreground pt-1 border-t border-border/50 gap-2">
+			<div class="flex flex-wrap items-center gap-2">
 				<span>
 					Showing <span class="font-semibold text-foreground">{heads.length}</span> of{' '}
 					<span class="font-semibold text-foreground">{totalCount}</span> heads
 				</span>
+
+				{#if selectedSalesmanId && selectedSalesmanId !== 'all'}
+					{@const currentSalesman = salesmen.find((s) => String(s.id) === String(selectedSalesmanId))}
+					<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 text-[11px] font-medium">
+						<User class="w-3 h-3" />
+						Salesman: {currentSalesman?.name || `ID #${selectedSalesmanId}`}
+						<button
+							type="button"
+							class="hover:text-destructive transition-colors ml-0.5"
+							onclick={() => {
+								selectedSalesmanId = 'all';
+								currentPage = 1;
+								fetchHeads();
+								fetchSummary();
+							}}
+							title="Clear salesman filter"
+						>
+							<X class="w-3 h-3" />
+						</button>
+					</span>
+				{/if}
+
+				{#if selectedType !== 'all'}
+					<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted border border-border text-[11px] font-medium text-foreground capitalize">
+						Type: {selectedType === 'customer' ? 'Direct Customers' : 'Agents / Partners'}
+						<button
+							type="button"
+							class="hover:text-destructive transition-colors ml-0.5"
+							onclick={() => {
+								selectedType = 'all';
+								currentPage = 1;
+								fetchHeads();
+							}}
+							title="Clear type filter"
+						>
+							<X class="w-3 h-3" />
+						</button>
+					</span>
+				{/if}
+
 				{#if search}
+					<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted border border-border text-[11px] font-medium text-foreground">
+						Search: "{search}"
+						<button
+							type="button"
+							class="hover:text-destructive transition-colors ml-0.5"
+							onclick={() => {
+								search = '';
+								currentPage = 1;
+								fetchHeads();
+							}}
+							title="Clear search"
+						>
+							<X class="w-3 h-3" />
+						</button>
+					</span>
+				{/if}
+
+				{#if (selectedSalesmanId && selectedSalesmanId !== 'all') || selectedType !== 'all' || search}
 					<Button
 						variant="ghost"
 						size="sm"
 						class="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground gap-1"
-						onclick={() => {
-							search = '';
-							currentPage = 1;
-							fetchHeads();
-						}}
+						onclick={resetAllFilters}
 					>
 						<X class="w-3 h-3" />
-						Clear search
+						Reset all filters
 					</Button>
 				{/if}
 			</div>
@@ -508,13 +673,9 @@
 				<Button
 					size="sm"
 					variant="outline"
-					onclick={() => {
-						search = '';
-						currentPage = 1;
-						fetchHeads();
-					}}
+					onclick={resetAllFilters}
 				>
-					Clear Search
+					Reset Filters
 				</Button>
 			</div>
 		{:else}
@@ -619,9 +780,18 @@
 								<!-- Assigned Salesman -->
 								<td class="py-3 px-4">
 									{#if head.salesmanName}
-										<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted text-foreground border border-border">
+										<button
+											type="button"
+											class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted text-foreground border border-border hover:border-primary/40 hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+											onclick={() => {
+												if (head.salesmanId) {
+													handleSalesmanChange(String(head.salesmanId));
+												}
+											}}
+											title="Filter heads by {head.salesmanName}"
+										>
 											{head.salesmanName}
-										</span>
+										</button>
 									{:else}
 										<span class="text-[11px] text-muted-foreground italic">Inhouse / Direct</span>
 									{/if}
