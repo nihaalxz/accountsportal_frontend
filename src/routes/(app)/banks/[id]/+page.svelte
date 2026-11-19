@@ -28,6 +28,7 @@
 	} from 'lucide-svelte';
 	import { DateDisplay } from '$lib/components';
 	import { formatDateOnly, getBahrainDateString } from '$lib/formatters/date';
+	import { resolveStatementTransactionType, getStatementTypeBadge } from '$lib/utils/statement-classifier';
 
 	const bankId = parseInt($page.params.id ?? '', 10);
 
@@ -117,11 +118,12 @@
 			const debit = isDebit ? t.amount : 0;
 			const credit = !isDebit ? t.amount : 0;
 			bal += debit - credit;
-			return { t, debit, credit, bal };
+			const txType = resolveStatementTransactionType(t, true, currentBank.id);
+			return { t, debit, credit, bal, txType };
 		});
 
 		const filteredIds = new Set(filteredTransactions.map((x) => x.id));
-		return mapped.filter((row) => filteredIds.has(row.t.id)).reverse();
+		return mapped.filter((row) => filteredIds.has(row.t.id));
 	});
 
 	const filterSummary = $derived.by(() => {
@@ -194,8 +196,10 @@
 			'ID',
 			'Date',
 			'Description',
+			'Type',
 			'Debit (BHD)',
 			'Credit (BHD)',
+			'Balance (BHD)',
 			'Reference'
 		];
 
@@ -203,8 +207,10 @@
 			row.t.documentNumber,
 			row.t.createdAt ? formatDateOnly(row.t.createdAt) : '',
 			row.t.displayNarrative || row.t.displayDescription || row.t.description || '',
+			row.txType,
 			row.debit > 0 ? row.debit : '',
 			row.credit > 0 ? row.credit : '',
+			row.bal,
 			row.t.referenceId ? `${row.t.referenceType ?? ''} #${row.t.referenceId}` : ''
 		]);
 
@@ -563,13 +569,16 @@
 									<th class="p-4 w-16">ID</th>
 									<th class="p-4 w-28">Date</th>
 									<th class="p-4">Description</th>
+									<th class="p-4 w-24 text-center">Type</th>
 									<th class="p-4 w-28 text-right">Debit</th>
 									<th class="p-4 w-28 text-right">Credit</th>
+									<th class="p-4 w-28 text-right">Balance</th>
 									<th class="p-4 w-32">Source Ref</th>
 								</tr>
 							</thead>
 							<tbody class="divide-y divide-border/60">
 								{#each statementRows as row (row.t.id)}
+									{@const badge = getStatementTypeBadge(row.txType)}
 									<tr class="hover:bg-muted/10 transition-colors">
 										<td class="p-4 font-mono font-medium text-muted-foreground"
 											>{row.t.documentNumber}</td
@@ -584,6 +593,13 @@
 													row.t.description}
 											/>
 										</td>
+										<td class="p-4 text-center">
+											<span
+												class="inline-block px-2 py-0.5 text-[10px] font-bold rounded-md border {badge.badgeClass}"
+											>
+												{badge.label}
+											</span>
+										</td>
 										<td class="p-4 text-right font-semibold text-emerald-600">
 											{#if row.debit > 0}
 												<MoneyDisplay amount={row.debit} />
@@ -597,6 +613,9 @@
 											{:else}
 												<span class="text-muted-foreground/35">—</span>
 											{/if}
+										</td>
+										<td class="p-4 text-right font-mono font-semibold text-foreground">
+											<MoneyDisplay amount={row.bal} />
 										</td>
 										<td class="p-4">
 											{#if row.t.referenceId}
