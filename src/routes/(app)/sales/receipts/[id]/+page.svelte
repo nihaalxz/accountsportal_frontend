@@ -327,9 +327,18 @@
 					</div>
 					<div class="space-y-1">
 						<span class="text-muted-foreground block">Payment Mode / Method</span>
-						<span class="capitalize text-sm font-semibold text-foreground block"
-							>{receiptDetail.paymentMode}</span
-						>
+						<div class="flex items-center gap-2 flex-wrap">
+							<span class="capitalize text-sm font-semibold text-foreground block"
+								>{receiptDetail.paymentMode}</span
+							>
+							{#if receiptDetail.paymentMode?.toLowerCase() === 'cash' && receiptDetail.bankName && receiptDetail.bankName.toLowerCase() !== 'cash account'}
+								<span
+									class="text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 font-mono font-medium border border-emerald-200/50"
+								>
+									{receiptDetail.bankName}
+								</span>
+							{/if}
+						</div>
 					</div>
 					<div class="space-y-1">
 						<span class="text-muted-foreground block">Total Receipt Amount</span>
@@ -345,7 +354,11 @@
 					</div>
 					{#if receiptDetail.bankName}
 						<div class="space-y-1">
-							<span class="text-muted-foreground block">Target Bank</span>
+							<span class="text-muted-foreground block">
+								{receiptDetail.paymentMode?.toLowerCase() === 'cash'
+									? 'Target Cash Drawer / Account'
+									: 'Target Bank'}
+							</span>
 							<span class="font-semibold text-primary text-sm block"
 								>{receiptDetail.bankName}</span
 							>
