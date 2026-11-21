@@ -45,6 +45,7 @@
 		lastReconciledAt?: string;
 		createdAt: string;
 		updatedAt: string;
+		clientName?: string;
 	}
 
 	interface SalesmanReportResponse {
@@ -595,6 +596,139 @@
 	}
 
 	function handleExportIndividualCSV(s: SalesmanReportResponse) {
+		if (expandedTab === 'profit') {
+			const recordsToExport = (filteredProfitRecordsData && filteredProfitRecordsData.length > 0)
+				? filteredProfitRecordsData
+				: profitRecordsData;
+
+			if (recordsToExport.length === 0) {
+				toast.info('No profit records available to export.');
+				return;
+			}
+
+			const headers = [
+				'Document #',
+				'Category',
+				'Client / Pax',
+				'Payable Sale (BHD)',
+				'Supplier Cost (BHD)',
+				'Approved Cost (BHD)',
+				'Net Profit (BHD)',
+				'Margin %',
+				'Deal Status',
+				'Profit Type',
+				'Cost Source',
+				'Date'
+			];
+
+			const rows: (string | number | boolean | null | undefined)[][] = recordsToExport.map((row) => {
+				const docNo = row.documentNumber || `#${row.bookingId}`;
+				const category = (row.bookingType || '—').toUpperCase();
+				const client = row.clientName || '—';
+				const sale = Number(row.payableAmount || 0);
+				const supplierCost = Number(row.finalSupplierCost || 0);
+				const approvedCost = (row.accountsApprovedTotal !== null && row.accountsApprovedTotal !== undefined)
+					? Number(row.accountsApprovedTotal).toFixed(3)
+					: '—';
+				const profit = Number(row.profitAmount || 0);
+				const margin = sale > 0 ? `${((profit / sale) * 100).toFixed(1)}%` : '—';
+				const dealStatus = row.isFinal ? 'Closed' : 'Open';
+				const profitType = formatProfitType(row.profitType);
+				const costSource = formatCostSource(row.supplierCostSource);
+				const rawDate = row.bookingCreatedAt || row.createdAt;
+				const dateFormatted = rawDate ? new Date(rawDate).toLocaleDateString('en-GB') : '—';
+
+				return [
+					docNo,
+					category,
+					client,
+					sale.toFixed(3),
+					supplierCost.toFixed(3),
+					approvedCost,
+					profit.toFixed(3),
+					margin,
+					dealStatus,
+					profitType,
+					costSource,
+					dateFormatted
+				];
+			});
+
+			const totalSale = recordsToExport.reduce((acc, r) => acc + (r.payableAmount || 0), 0);
+			const totalSupplierCost = recordsToExport.reduce((acc, r) => acc + (r.finalSupplierCost || 0), 0);
+			const totalApprovedCost = recordsToExport.reduce((acc, r) => acc + (r.accountsApprovedTotal ?? 0), 0);
+			const totalProfit = recordsToExport.reduce((acc, r) => acc + (r.profitAmount || 0), 0);
+			const totalMargin = totalSale > 0 ? `${((totalProfit / totalSale) * 100).toFixed(1)}%` : '—';
+			const finalizedCount = recordsToExport.filter((r) => r.isFinal).length;
+
+			rows.push([
+				'TOTAL',
+				'',
+				`${recordsToExport.length} records (${finalizedCount} Closed / ${recordsToExport.length - finalizedCount} Open)`,
+				totalSale.toFixed(3),
+				totalSupplierCost.toFixed(3),
+				totalApprovedCost > 0 ? totalApprovedCost.toFixed(3) : '—',
+				totalProfit.toFixed(3),
+				totalMargin,
+				'',
+				'',
+				'',
+				''
+			]);
+
+			downloadCSV(
+				`salesman_${s.name.replace(/\s+/g, '_').toLowerCase()}_profit_records_${indStartDate || 'all'}_to_${indEndDate || 'all'}.csv`,
+				headers,
+				rows
+			);
+			toast.success(`Exported ${recordsToExport.length} profit records for ${s.name}.`);
+			return;
+		}
+
+		if (expandedTab === 'entries') {
+			const entriesToExport = (filteredEntriesData && filteredEntriesData.length > 0)
+				? filteredEntriesData
+				: entriesData;
+
+			if (entriesToExport.length === 0) {
+				toast.info('No entries available to export.');
+				return;
+			}
+
+			const headers = ['Document #', 'Customer / Head', 'Service', 'Details', 'Amount (BHD)', 'Date', 'Status'];
+			const rows: (string | number | boolean | null | undefined)[][] = entriesToExport.map((row) => {
+				const rawDate = row.createdAt || row.bookingCreatedAt;
+				return [
+					row.documentNumber || row.receiptId || `#${row.id}`,
+					row.headName || row.clientName || '—',
+					SERVICE_LABELS[entriesServiceType] || row.service || '—',
+					getEntryMainDetail(row, entriesServiceType) || '—',
+					Number(row.payableAmount ?? row.amount ?? 0).toFixed(3),
+					rawDate ? new Date(rawDate).toLocaleDateString('en-GB') : '—',
+					row.paymentStatus || row.status || '—'
+				];
+			});
+
+			const totalAmt = entriesToExport.reduce((acc, r) => acc + Number(r.payableAmount ?? r.amount ?? 0), 0);
+			rows.push([
+				'TOTAL',
+				'',
+				`${entriesToExport.length} entries`,
+				'',
+				totalAmt.toFixed(3),
+				'',
+				''
+			]);
+
+			downloadCSV(
+				`salesman_${s.name.replace(/\s+/g, '_').toLowerCase()}_${entriesServiceType}_entries_${indStartDate || 'all'}_to_${indEndDate || 'all'}.csv`,
+				headers,
+				rows
+			);
+			toast.success(`Exported ${entriesToExport.length} entries for ${s.name}.`);
+			return;
+		}
+
 		const currentS = (expandedSalesmanId === s.id && indSalesmanReport) ? indSalesmanReport : s;
 		const headers = ['Booking Category', 'Total Entries', 'Total Sales Value (BHD)', 'Final Profit (BHD)'];
 		const rows = [
