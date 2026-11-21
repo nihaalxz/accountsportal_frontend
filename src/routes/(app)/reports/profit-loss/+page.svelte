@@ -1,41 +1,29 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { apiFetch } from '$lib/api/api-client';
 	import MoneyDisplay from '$lib/components/MoneyDisplay.svelte';
-	import { DateDisplay } from '$lib/components';
 	import { Button } from '$lib/components/ui/button';
 	import { toast } from '$lib/stores/toast';
 	import { previewDocument } from '$lib/utils/preview-document';
 	import { exportToCSV as downloadCSV } from '$lib/utils/csv-exporter';
-	import { getBahrainPresetRanges, formatDateOnly } from '$lib/formatters/date';
 	import {
-		TrendingUp,
-		TrendingDown,
 		BarChart3,
-		DollarSign,
-		CreditCard,
-		Wallet,
-		Calendar,
 		RefreshCw,
 		FileSpreadsheet,
 		FileDown,
+		Calendar,
+		X,
+		Layers,
+		FileText,
 		ChevronDown,
 		ChevronRight,
 		AlertCircle,
-		CheckCircle2,
-		ShieldCheck,
-		Layers,
 		Plane,
 		Building2,
-		FileText,
 		Compass,
 		Clock,
 		Car,
-		Briefcase,
-		ArrowRight,
-		ExternalLink,
-		BookOpen
+		Briefcase
 	} from 'lucide-svelte';
 
 	interface ServiceFinancialLineItem {
@@ -90,24 +78,91 @@
 		dataSourcesStatus: string;
 	}
 
-	// ─── States ───────────────────────────────────────────────────────────────────
+	// ─── Preset Helper & Date State ──────────────────────────────────────────────
+	type PresetType = 'all' | 'today' | 'this_week' | 'this_month' | 'last_30' | 'this_year';
+
+	function formatDateForInput(date: Date): string {
+		const year = date.getFullYear();
+		const month = String(date.getMonth() + 1).padStart(2, '0');
+		const day = String(date.getDate()).padStart(2, '0');
+		return `${year}-${month}-${day}`;
+	}
+
+	function calculatePresetRange(preset: PresetType): { start: string; end: string } {
+		const now = new Date();
+		const todayStr = formatDateForInput(now);
+
+		if (preset === 'today') {
+			return { start: todayStr, end: todayStr };
+		} else if (preset === 'this_week') {
+			const startOfWeek = new Date(now);
+			const dayOfWeek = (now.getDay() + 6) % 7; // Monday = 0
+			startOfWeek.setDate(now.getDate() - dayOfWeek);
+			startOfWeek.setHours(0, 0, 0, 0);
+			return { start: formatDateForInput(startOfWeek), end: todayStr };
+		} else if (preset === 'this_month') {
+			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+			const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+			return { start: formatDateForInput(startOfMonth), end: formatDateForInput(endOfMonth) };
+		} else if (preset === 'last_30') {
+			const past30 = new Date();
+			past30.setDate(now.getDate() - 30);
+			return { start: formatDateForInput(past30), end: todayStr };
+		} else if (preset === 'this_year') {
+			const startOfYear = new Date(now.getFullYear(), 0, 1);
+			return { start: formatDateForInput(startOfYear), end: todayStr };
+		} else {
+			return { start: '', end: '' };
+		}
+	}
+
+	const initialDates = calculatePresetRange('this_month');
+	let activePreset = $state<PresetType>('this_month');
+	let startDate = $state<string>(initialDates.start);
+	let endDate = $state<string>(initialDates.end);
+
+	function setPreset(preset: PresetType) {
+		activePreset = preset;
+		const { start, end } = calculatePresetRange(preset);
+		startDate = start;
+		endDate = end;
+		loadReport();
+	}
+
+	function handleCustomDateChange() {
+		activePreset = 'all';
+		loadReport();
+	}
+
+	// ─── States ──────────────────────────────────────────────────────────────────
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let pnlData = $state<OperationalProfitAndLossResponse | null>(null);
 
-	// Filters
-	const presets = getBahrainPresetRanges();
-	let selectedPreset = $state<string>('thisMonth');
-	let startDate = $state<string>(presets.thisMonth.startDate);
-	let endDate = $state<string>(presets.thisMonth.endDate);
+	// Navigation Tabs: 'performance' | 'statement'
+	let activeTab = $state<'performance' | 'statement'>('performance');
 
-	// View Tabs
-	let activeTab = $state<'performance' | 'statement' | 'gl'>('performance');
-
-	// Section collapsible toggles in Income Statement
+	// Collapsible toggles in Income Statement
 	let showRevenueDetails = $state(true);
 	let showCostDetails = $state(true);
 	let showExpenseDetails = $state(true);
+
+	// Derived calculations driven by finalized profit
+	const finalGrossProfit = $derived(pnlData?.finalizedGrossProfit ?? 0);
+	const finalGrossMargin = $derived(
+		pnlData && pnlData.netRevenue > 0
+			? (pnlData.finalizedGrossProfit / pnlData.netRevenue) * 100
+			: 0
+	);
+	const finalNetProfit = $derived(
+		pnlData ? pnlData.finalizedGrossProfit - pnlData.totalOperatingExpenses : 0
+	);
+	const isFinalNetProfitable = $derived(finalNetProfit >= 0);
+	const finalNetMargin = $derived(
+		pnlData && pnlData.netRevenue > 0
+			? (finalNetProfit / pnlData.netRevenue) * 100
+			: 0
+	);
 
 	// Service Icons Map
 	function getServiceIcon(serviceType: string) {
@@ -121,7 +176,7 @@
 		return Briefcase;
 	}
 
-	// ─── API Loaders ─────────────────────────────────────────────────────────────
+	// ─── API Loader ─────────────────────────────────────────────────────────────
 	async function loadReport() {
 		loading = true;
 		error = null;
@@ -133,7 +188,7 @@
 
 			const query = new URLSearchParams(params).toString();
 			pnlData = await apiFetch<OperationalProfitAndLossResponse>(
-				`api/reporting/profit-loss/summary?${query}`
+				`api/reporting/profit-loss/summary${query ? `?${query}` : ''}`
 			);
 		} catch (err: any) {
 			error = err?.message || 'Failed to load Profit & Loss report. Please retry.';
@@ -142,22 +197,6 @@
 		} finally {
 			loading = false;
 		}
-	}
-
-	// ─── Preset Handlers ─────────────────────────────────────────────────────────
-	function handlePresetChange(presetKey: string) {
-		selectedPreset = presetKey;
-		const range = (presets as Record<string, { startDate: string; endDate: string }>)[presetKey];
-		if (range) {
-			startDate = range.startDate;
-			endDate = range.endDate;
-			loadReport();
-		}
-	}
-
-	function handleCustomDateApply() {
-		selectedPreset = 'custom';
-		loadReport();
 	}
 
 	// ─── Export Handlers ─────────────────────────────────────────────────────────
@@ -183,6 +222,7 @@
 
 		// Revenue items
 		pnlData.revenueItems.forEach((r) => {
+			const srvMargin = r.salesAmount > 0 ? (r.finalProfitAmount / r.salesAmount) * 100 : 0;
 			rows.push([
 				'1. Revenues',
 				`Sales — ${r.serviceLabel}`,
@@ -190,8 +230,8 @@
 				r.bookingCount,
 				r.salesAmount.toFixed(3),
 				r.costAmount.toFixed(3),
-				r.profitAmount.toFixed(3),
-				`${r.marginPercentage.toFixed(1)}%`,
+				r.finalProfitAmount.toFixed(3),
+				`${srvMargin.toFixed(1)}%`,
 				r.finalProfitAmount.toFixed(3)
 			]);
 		});
@@ -241,9 +281,9 @@
 			rows.push([
 				'2. Cost of Sales',
 				'Less: Approved Purchase Returns',
-				'Supplier Credit Offset',
+				'Cost Deduction',
 				'—',
-				'—',
+				'0.000',
 				`-${pnlData.approvedPurchaseReturns.toFixed(3)}`,
 				'—',
 				'—',
@@ -252,10 +292,10 @@
 		}
 
 		rows.push([
-			'2. COGS Subtotal',
-			'TOTAL COST OF GOODS SOLD (COGS)',
-			'Direct Cost',
-			'—',
+			'2. Cost of Sales Subtotal',
+			'TOTAL NET COST OF SALES (COGS)',
+			'Operating Outflow',
+			pnlData.costOfSalesItems.reduce((acc, x) => acc + x.bookingCount, 0),
 			'—',
 			pnlData.netCostOfSales.toFixed(3),
 			'—',
@@ -263,17 +303,19 @@
 			'—'
 		]);
 
-		// Gross Profit
+		// Gross Profit (Finalized)
+		const csvFinalGross = pnlData.finalizedGrossProfit;
+		const csvFinalGrossMargin = pnlData.netRevenue > 0 ? (csvFinalGross / pnlData.netRevenue) * 100 : 0;
 		rows.push([
 			'3. Gross Margin',
-			'GROSS PROFIT',
+			'GROSS PROFIT (FINALIZED)',
 			'Trading Margin',
 			'—',
 			'—',
 			'—',
-			pnlData.grossProfit.toFixed(3),
-			`${pnlData.grossMarginPercentage.toFixed(1)}%`,
-			pnlData.finalizedGrossProfit.toFixed(3)
+			csvFinalGross.toFixed(3),
+			`${csvFinalGrossMargin.toFixed(1)}%`,
+			csvFinalGross.toFixed(3)
 		]);
 
 		// Expenses
@@ -284,8 +326,8 @@
 				'Overhead',
 				e.expenseCount,
 				'—',
+				e.totalAmount.toFixed(3),
 				'—',
-				`-${e.totalAmount.toFixed(3)}`,
 				'—',
 				'—'
 			]);
@@ -294,55 +336,53 @@
 		if (pnlData.totalPayrollExpenses > 0) {
 			rows.push([
 				'4. Operating Expenses',
-				'Staff Salaries & Payroll Allowances',
-				'Payroll',
+				'Staff Salaries & Payroll',
+				'Payroll & Commissions',
 				'—',
 				'—',
+				pnlData.totalPayrollExpenses.toFixed(3),
 				'—',
-				`-${pnlData.totalPayrollExpenses.toFixed(3)}`,
 				'—',
 				'—'
 			]);
 		}
 
 		rows.push([
-			'4. Expenses Subtotal',
+			'4. Operating Expenses Subtotal',
 			'TOTAL OPERATING EXPENSES',
-			'Overheads & SG&A',
+			'Operating Overhead',
+			pnlData.expenseItems.reduce((acc, x) => acc + x.expenseCount, 0),
 			'—',
+			pnlData.totalOperatingExpenses.toFixed(3),
 			'—',
-			'—',
-			`-${pnlData.totalOperatingExpenses.toFixed(3)}`,
 			'—',
 			'—'
 		]);
 
-		// Net Profit
+		// Net Profit (Finalized)
+		const csvFinalNet = pnlData.finalizedNetProfit ?? (csvFinalGross - pnlData.totalOperatingExpenses);
+		const csvFinalNetMargin = pnlData.netRevenue > 0 ? (csvFinalNet / pnlData.netRevenue) * 100 : 0;
 		rows.push([
 			'5. Net Bottom Line',
-			'NET OPERATING PROFIT / (LOSS)',
-			pnlData.isProfitable ? 'Surplus' : 'Deficit',
+			'NET OPERATING PROFIT / (LOSS) [FINALIZED]',
+			csvFinalNet >= 0 ? 'Surplus' : 'Deficit',
 			'—',
 			'—',
 			'—',
-			pnlData.netProfit.toFixed(3),
-			`${pnlData.netMarginPercentage.toFixed(1)}%`,
-			pnlData.finalizedNetProfit.toFixed(3)
+			csvFinalNet.toFixed(3),
+			`${csvFinalNetMargin.toFixed(1)}%`,
+			csvFinalNet.toFixed(3)
 		]);
 
 		const filename = `profit_loss_${startDate || 'start'}_to_${endDate || 'end'}.csv`;
 		downloadCSV(filename, headers, rows);
-		toast.success('Profit & Loss CSV exported successfully.');
+		toast.success('P&L Report CSV exported successfully.');
 	}
 
 	function handleExportPDF() {
-		const params: Record<string, any> = {
-			startDate,
-			endDate
-		};
-
-		previewDocument('report', 'profit-loss', params);
-		toast.info('Generating Profit & Loss Statement PDF...');
+		if (!pnlData) return;
+		previewDocument('report', 'profit-loss-operational', { startDate, endDate });
+		toast.info('Generating Operational P&L Statement PDF...');
 	}
 
 	onMount(() => {
@@ -350,422 +390,406 @@
 	});
 </script>
 
-<svelte:head>
-	<title>Profit & Loss Report (Income Statement) — Accounts Portal</title>
-</svelte:head>
-
 <div class="space-y-6">
-	<!-- ─── PAGE HEADER & ACTIONS ─────────────────────────────────────────────── -->
-	<div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-		<div class="space-y-1">
-			<div class="flex items-center gap-2">
-				<h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-					<TrendingUp class="h-6 w-6 text-primary" />
-					Profit & Loss Report
-				</h1>
-				<span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-					Income Statement
-				</span>
-			</div>
-			<p class="text-xs text-muted-foreground">
-				Executive operational income statement aggregating 7 travel service revenues, supplier costs, operating overheads, and net margins.
-			</p>
+	<!-- Page Header -->
+	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+		<div class="flex flex-col gap-1">
+			<h1 class="text-xl font-bold text-foreground flex items-center gap-2">
+				<BarChart3 class="h-5 w-5 text-primary" /> Operational Profit & Loss Report
+			</h1>
+			<p class="text-xs text-muted-foreground">Aggregated booking sales, supplier COGS, finalized gross margins, and net operating profit across all service modules.</p>
 		</div>
-
 		<div class="flex items-center gap-2">
-			<Button
-				variant="outline"
-				size="sm"
-				onclick={loadReport}
-				disabled={loading}
-				class="h-9 gap-1.5 rounded-xl cursor-pointer"
-			>
-				<RefreshCw class="h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
+			<Button variant="outline" class="h-8.5 rounded-xl cursor-pointer" onclick={loadReport} disabled={loading}>
+				<RefreshCw class={['h-3.5 w-3.5 mr-1.5', loading ? 'animate-spin' : ''].join(' ')} />
 				<span>Refresh</span>
 			</Button>
-
-			<Button
-				variant="outline"
-				size="sm"
-				onclick={handleExportCSV}
-				disabled={loading || !pnlData}
-				class="h-9 gap-1.5 rounded-xl cursor-pointer"
-			>
-				<FileSpreadsheet class="h-3.5 w-3.5 text-emerald-600" />
-				<span>Export CSV</span>
-			</Button>
-
-			<Button
-				variant="default"
-				size="sm"
-				onclick={handleExportPDF}
-				disabled={loading || !pnlData}
-				class="h-9 gap-1.5 rounded-xl cursor-pointer shadow-xs"
-			>
-				<FileDown class="h-3.5 w-3.5" />
-				<span>Print / PDF</span>
-			</Button>
 		</div>
 	</div>
 
-	<!-- ─── FILTER TOOLBAR ─────────────────────────────────────────────────────── -->
-	<div class="bg-card border border-border rounded-2xl p-4 shadow-2xs space-y-3">
-		<!-- Row 1: Bahrain Date Preset Pills -->
-		<div class="flex items-center justify-between flex-wrap gap-2 pb-1 border-b border-border/50 text-xs">
-			<div class="flex items-center gap-1.5 overflow-x-auto flex-nowrap pb-1 scrollbar-thin">
-				<span class="text-[11px] font-bold text-muted-foreground mr-1 shrink-0">Period:</span>
-				{#each [
-					{ id: 'today', label: 'Today' },
-					{ id: 'thisWeek', label: 'This Week' },
-					{ id: 'thisMonth', label: 'This Month' },
-					{ id: 'thisQuarter', label: 'This Quarter' },
-					{ id: 'thisYear', label: 'This Year (2026)' },
-					{ id: 'allTime', label: 'All Time' }
-				] as p}
-					<button
-						type="button"
-						onclick={() => handlePresetChange(p.id)}
-						class="px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap {selectedPreset === p.id
-							? 'bg-primary text-primary-foreground shadow-2xs'
-							: 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border border-border/40'}"
-					>
-						{p.label}
-					</button>
-				{/each}
+	<!-- Date Filter Controls -->
+	<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-3">
+		<div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+			<div class="flex items-center gap-2">
+				<Calendar class="h-4 w-4 text-primary" />
+				<span class="text-xs font-bold text-foreground">Date Range Filter</span>
+				{#if startDate || endDate}
+					<span class="px-2.5 py-0.5 rounded-md bg-primary/10 text-primary font-mono text-[11px] font-semibold">
+						{startDate || 'Start'} &rarr; {endDate || 'End'}
+					</span>
+				{:else}
+					<span class="px-2.5 py-0.5 rounded-md bg-muted text-muted-foreground font-mono text-[11px]">
+						All Time
+					</span>
+				{/if}
 			</div>
 
-			<div class="text-[11px] text-muted-foreground flex items-center gap-1 font-mono">
-				<Calendar class="h-3 w-3 text-primary" />
-				<span>Bahrain Time (UTC+3)</span>
+			<!-- Preset Buttons -->
+			<div class="flex items-center gap-1.5 text-xs overflow-x-auto flex-nowrap pb-1 scrollbar-thin">
+				<button
+					type="button"
+					onclick={() => setPreset('all')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'all' && !startDate && !endDate ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					All Time
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('today')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'today' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					Today
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('this_week')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'this_week' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					This Week
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('this_month')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'this_month' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					This Month
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('last_30')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'last_30' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					Last 30 Days
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('this_year')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'this_year' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					This Year
+				</button>
 			</div>
 		</div>
 
-		<!-- Row 2: Date Inputs -->
-		<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1 sm:max-w-md">
-			<div class="space-y-1">
-				<label for="pnl-start" class="block font-semibold text-muted-foreground text-[11px]">Start Date</label>
+		<!-- Custom Date Pickers -->
+		<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2 border-t border-border/40 text-xs">
+			<div class="flex items-center gap-2">
+				<label for="pnl-startDate" class="text-muted-foreground font-medium text-[11px]">From:</label>
 				<input
-					id="pnl-start"
+					id="pnl-startDate"
 					type="date"
 					bind:value={startDate}
-					onchange={handleCustomDateApply}
-					class="w-full h-9 px-3 rounded-xl border border-border bg-background text-foreground font-mono text-xs focus:ring-1 focus:ring-primary outline-hidden"
+					onchange={handleCustomDateChange}
+					class="px-2.5 py-1 rounded-xl border border-border bg-background text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
 				/>
 			</div>
 
-			<div class="space-y-1">
-				<label for="pnl-end" class="block font-semibold text-muted-foreground text-[11px]">End Date</label>
+			<div class="flex items-center gap-2">
+				<label for="pnl-endDate" class="text-muted-foreground font-medium text-[11px]">To:</label>
 				<input
-					id="pnl-end"
+					id="pnl-endDate"
 					type="date"
 					bind:value={endDate}
-					onchange={handleCustomDateApply}
-					class="w-full h-9 px-3 rounded-xl border border-border bg-background text-foreground font-mono text-xs focus:ring-1 focus:ring-primary outline-hidden"
+					onchange={handleCustomDateChange}
+					class="px-2.5 py-1 rounded-xl border border-border bg-background text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
 				/>
 			</div>
+
+			{#if startDate || endDate}
+				<Button
+					variant="ghost"
+					class="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1 sm:ml-auto"
+					onclick={() => setPreset('all')}
+				>
+					<X class="h-3 w-3" />
+					<span>Clear Dates</span>
+				</Button>
+			{/if}
 		</div>
 	</div>
 
-	<!-- ─── ERROR STATE ────────────────────────────────────────────────────────── -->
+	<!-- Error Alert -->
 	{#if error}
-		<div class="p-6 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive flex flex-col sm:flex-row items-center justify-between gap-4">
-			<div class="flex items-center gap-3">
-				<AlertCircle class="h-6 w-6 shrink-0" />
+		<div class="p-4 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive flex flex-col sm:flex-row items-center justify-between gap-4 text-xs shadow-xs">
+			<div class="flex items-center gap-2.5">
+				<AlertCircle class="h-5 w-5 shrink-0" />
 				<div>
-					<h3 class="text-sm font-bold">Failed to generate Profit & Loss Report</h3>
-					<p class="text-xs opacity-90 mt-0.5">{error}</p>
+					<h3 class="font-bold">Failed to generate Profit & Loss Report</h3>
+					<p class="opacity-90 mt-0.5">{error}</p>
 				</div>
 			</div>
-			<Button variant="outline" size="sm" onclick={loadReport} class="h-9 gap-1.5 rounded-xl cursor-pointer shrink-0">
-				<RefreshCw class="h-3.5 w-3.5" />
+			<Button variant="outline" size="sm" onclick={loadReport} class="h-8.5 rounded-xl cursor-pointer shrink-0">
+				<RefreshCw class="h-3.5 w-3.5 mr-1" />
 				<span>Retry</span>
 			</Button>
 		</div>
 	{/if}
 
-	<!-- ─── 5 TOP EXECUTIVE KPI CARDS ──────────────────────────────────────────── -->
 	{#if loading && !pnlData}
-		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-			{#each Array(5) as _}
-				<div class="h-28 rounded-2xl bg-muted/40 animate-pulse border border-border/40"></div>
-			{/each}
+		<!-- Loading Skeleton State matching Salesmen Report -->
+		<div class="animate-pulse space-y-6">
+			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+				{#each Array(5) as _}
+					<div class="h-24 bg-muted rounded-2xl"></div>
+				{/each}
+			</div>
+			<div class="h-96 bg-muted rounded-2xl"></div>
 		</div>
 	{:else if pnlData}
-		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-			<!-- KPI 1: Operating Revenue -->
-			<div class="bg-card border border-border rounded-2xl p-4 shadow-2xs space-y-2 border-l-4 border-l-blue-500">
-				<div class="flex items-center justify-between text-muted-foreground">
-					<span class="text-[11px] font-bold uppercase tracking-wider">Operating Revenue</span>
-					<DollarSign class="h-4 w-4 text-blue-500" />
+		<!-- 5 Executive KPI Cards -->
+		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+			<!-- Card 1: Operating Revenue -->
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<div class="flex items-center justify-between">
+					<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Operating Revenue</span>
+					<span class="text-[10px] font-mono text-muted-foreground">{pnlData.revenueItems.reduce((acc, x) => acc + x.bookingCount, 0)} Bookings</span>
 				</div>
-				<div class="space-y-0.5">
-					<div class="text-xl font-bold font-mono text-foreground">
-						<MoneyDisplay amount={pnlData.netRevenue} />
-					</div>
-					<div class="text-[11px] text-muted-foreground flex items-center justify-between">
-						<span>{pnlData.revenueItems.reduce((acc, x) => acc + x.bookingCount, 0)} Bookings</span>
-						{#if pnlData.approvedSalesReturns > 0}
-							<span class="text-rose-500 font-mono text-[10px]">-{pnlData.approvedSalesReturns.toFixed(3)} Ret</span>
-						{/if}
-					</div>
-				</div>
-			</div>
-
-			<!-- KPI 2: Cost of Sales -->
-			<div class="bg-card border border-border rounded-2xl p-4 shadow-2xs space-y-2 border-l-4 border-l-amber-500">
-				<div class="flex items-center justify-between text-muted-foreground">
-					<span class="text-[11px] font-bold uppercase tracking-wider">Cost of Sales (COGS)</span>
-					<CreditCard class="h-4 w-4 text-amber-500" />
-				</div>
-				<div class="space-y-0.5">
-					<div class="text-xl font-bold font-mono text-foreground">
-						<MoneyDisplay amount={pnlData.netCostOfSales} />
-					</div>
-					<div class="text-[11px] text-muted-foreground flex items-center justify-between">
-						<span>Supplier Costs</span>
-						{#if pnlData.approvedPurchaseReturns > 0}
-							<span class="text-emerald-500 font-mono text-[10px]">-{pnlData.approvedPurchaseReturns.toFixed(3)} Ret</span>
-						{/if}
-					</div>
+				<span class="text-lg font-bold font-mono text-foreground block">
+					<MoneyDisplay amount={pnlData.netRevenue} />
+				</span>
+				<div class="text-[10px] text-muted-foreground flex items-center justify-between">
+					<span>Gross Sales</span>
+					{#if pnlData.approvedSalesReturns > 0}
+						<span class="text-rose-500 font-mono">-{pnlData.approvedSalesReturns.toFixed(3)} Ret</span>
+					{:else}
+						<span class="text-muted-foreground/70">Inflow</span>
+					{/if}
 				</div>
 			</div>
 
-			<!-- KPI 3: Gross Profit -->
-			<div class="bg-card border border-border rounded-2xl p-4 shadow-2xs space-y-2 border-l-4 border-l-teal-500">
-				<div class="flex items-center justify-between text-muted-foreground">
-					<span class="text-[11px] font-bold uppercase tracking-wider">Gross Profit</span>
-					<span class="text-xs font-bold font-mono text-teal-600 bg-teal-500/10 px-1.5 py-0.5 rounded">
-						{pnlData.grossMarginPercentage.toFixed(1)}%
+			<!-- Card 2: Cost of Sales -->
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Cost of Sales (COGS)</span>
+				<span class="text-lg font-bold font-mono text-foreground block">
+					<MoneyDisplay amount={pnlData.netCostOfSales} />
+				</span>
+				<div class="text-[10px] text-muted-foreground flex items-center justify-between">
+					<span>Supplier Buying Costs</span>
+					{#if pnlData.approvedPurchaseReturns > 0}
+						<span class="text-emerald-600 font-mono">-{pnlData.approvedPurchaseReturns.toFixed(3)} Ret</span>
+					{:else}
+						<span class="text-muted-foreground/70">Direct Costs</span>
+					{/if}
+				</div>
+			</div>
+
+			<!-- Card 3: Final Profit (Gross Margin) -->
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-1">
+						<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Final Profit</span>
+						<span class="text-[10px] text-muted-foreground/70 cursor-help" title="Realized profit from confirmed/completed accounts profit records">ⓘ</span>
+					</div>
+					<span class="text-[10px] font-bold font-mono text-teal-600 dark:text-teal-400 bg-teal-500/10 px-1.5 py-0.5 rounded">
+						{finalGrossMargin.toFixed(1)}%
 					</span>
 				</div>
-				<div class="space-y-0.5">
-					<div class="text-xl font-bold font-mono text-teal-600">
-						<MoneyDisplay amount={pnlData.grossProfit} />
-					</div>
-					<div class="text-[10px] text-muted-foreground flex items-center justify-between">
-						<span class="text-emerald-600 font-semibold">Final: {pnlData.finalizedGrossProfit.toFixed(3)}</span>
-						<span class="text-muted-foreground">Est: {pnlData.estimatedGrossProfit.toFixed(3)}</span>
-					</div>
+				<span class="text-lg font-bold font-mono text-teal-600 dark:text-teal-400 block">
+					<MoneyDisplay amount={finalGrossProfit} />
+				</span>
+				<div class="text-[10px] text-muted-foreground flex items-center justify-between">
+					<span>Realized Margin</span>
+					{#if pnlData.estimatedGrossProfit > 0}
+						<span class="text-muted-foreground/80 font-mono">Open: {pnlData.estimatedGrossProfit.toFixed(3)}</span>
+					{/if}
 				</div>
 			</div>
 
-			<!-- KPI 4: Operating Expenses -->
-			<div class="bg-card border border-border rounded-2xl p-4 shadow-2xs space-y-2 border-l-4 border-l-rose-500">
-				<div class="flex items-center justify-between text-muted-foreground">
-					<span class="text-[11px] font-bold uppercase tracking-wider">Operating Expenses</span>
-					<Wallet class="h-4 w-4 text-rose-500" />
-				</div>
-				<div class="space-y-0.5">
-					<div class="text-xl font-bold font-mono text-foreground">
-						<MoneyDisplay amount={pnlData.totalOperatingExpenses} />
-					</div>
-					<div class="text-[10px] text-muted-foreground flex items-center justify-between">
-						<span>Overheads: {pnlData.totalApprovedExpenses.toFixed(3)}</span>
-						<span>Payroll: {pnlData.totalPayrollExpenses.toFixed(3)}</span>
-					</div>
+			<!-- Card 4: Operating Expenses -->
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Operating Expenses</span>
+				<span class="text-lg font-bold font-mono text-foreground block">
+					<MoneyDisplay amount={pnlData.totalOperatingExpenses} />
+				</span>
+				<div class="text-[10px] text-muted-foreground flex items-center justify-between">
+					<span>Overhead: {pnlData.totalApprovedExpenses.toFixed(3)}</span>
+					<span>Payroll: {pnlData.totalPayrollExpenses.toFixed(3)}</span>
 				</div>
 			</div>
 
-			<!-- KPI 5: Net Profit / Loss -->
-			<div class="bg-card border border-border rounded-2xl p-4 shadow-2xs space-y-2 border-l-4 {pnlData.isProfitable ? 'border-l-emerald-500 bg-emerald-500/5' : 'border-l-rose-500 bg-rose-500/5'}">
-				<div class="flex items-center justify-between text-muted-foreground">
-					<span class="text-[11px] font-bold uppercase tracking-wider {pnlData.isProfitable ? 'text-emerald-600' : 'text-rose-600'}">
-						{pnlData.isProfitable ? 'Net Operating Profit' : 'Net Operating Loss'}
+			<!-- Card 5: Net Profit / Loss -->
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<div class="flex items-center justify-between">
+					<span class="text-[11px] font-bold uppercase tracking-wider block {isFinalNetProfitable ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+						{isFinalNetProfitable ? 'Net Profit' : 'Net Loss'}
 					</span>
-					<span class="text-xs font-bold font-mono {pnlData.isProfitable ? 'text-emerald-600 bg-emerald-500/10' : 'text-rose-600 bg-rose-500/10'} px-1.5 py-0.5 rounded">
-						{pnlData.netMarginPercentage.toFixed(1)}%
+					<span class="text-[10px] font-bold font-mono {isFinalNetProfitable ? 'text-emerald-600 bg-emerald-500/10' : 'text-rose-600 bg-rose-500/10'} px-1.5 py-0.5 rounded">
+						{finalNetMargin.toFixed(1)}%
 					</span>
 				</div>
-				<div class="space-y-0.5">
-					<div class="text-xl font-bold font-mono {pnlData.isProfitable ? 'text-emerald-600' : 'text-rose-600'}">
-						<MoneyDisplay amount={pnlData.netProfit} />
-					</div>
-					<div class="text-[10px] text-muted-foreground flex items-center justify-between">
-						<span class="font-semibold {pnlData.finalizedNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}">
-							Finalized Net: {pnlData.finalizedNetProfit.toFixed(3)}
-						</span>
-						<span>{pnlData.isProfitable ? 'Surplus' : 'Deficit'}</span>
-					</div>
+				<span class="text-lg font-bold font-mono {isFinalNetProfitable ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'} block">
+					<MoneyDisplay amount={finalNetProfit} />
+				</span>
+				<div class="text-[10px] text-muted-foreground flex items-center justify-between">
+					<span>Bottom Line</span>
+					<span class="font-semibold {isFinalNetProfitable ? 'text-emerald-600' : 'text-rose-600'}">{isFinalNetProfitable ? 'Surplus' : 'Deficit'}</span>
 				</div>
 			</div>
 		</div>
-	{/if}
 
-	<!-- ─── NAVIGATION VIEW TABS ───────────────────────────────────────────────── -->
-	<div class="flex items-center gap-1 border-b border-border text-xs font-semibold overflow-x-auto flex-nowrap pb-1 scrollbar-thin">
-		<button
-			type="button"
-			onclick={() => (activeTab = 'performance')}
-			class="px-4 py-2.5 border-b-2 transition-all cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap {activeTab === 'performance'
-				? 'border-primary text-primary font-bold'
-				: 'border-transparent text-muted-foreground hover:text-foreground'}"
-		>
-			<Layers class="h-4 w-4" />
-			<span>Service Performance Table</span>
-		</button>
-
-		<button
-			type="button"
-			onclick={() => (activeTab = 'statement')}
-			class="px-4 py-2.5 border-b-2 transition-all cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap {activeTab === 'statement'
-				? 'border-primary text-primary font-bold'
-				: 'border-transparent text-muted-foreground hover:text-foreground'}"
-		>
-			<FileText class="h-4 w-4" />
-			<span>Income Statement View</span>
-		</button>
-
-		<button
-			type="button"
-			onclick={() => (activeTab = 'gl')}
-			class="px-4 py-2.5 border-b-2 transition-all cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap {activeTab === 'gl'
-				? 'border-primary text-primary font-bold'
-				: 'border-transparent text-muted-foreground hover:text-foreground'}"
-		>
-			<BookOpen class="h-4 w-4" />
-			<span>Formal General Ledger P&L</span>
-		</button>
-	</div>
-
-	<!-- ─── TAB 1: SERVICE PERFORMANCE TABLE ───────────────────────────────────── -->
-	{#if activeTab === 'performance'}
-		<div class="bg-card border border-border rounded-2xl shadow-2xs overflow-hidden">
-			<div class="p-4 border-b border-border bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-				<div>
-					<h3 class="font-bold text-foreground">Operational Breakdown by Service</h3>
-					<p class="text-[11px] text-muted-foreground">
-						Comparative gross revenue, supplier buying costs, and finalized profits across the 7 operational service modules.
-					</p>
-				</div>
-				<div class="text-[11px] text-muted-foreground font-mono">
-					Period: {startDate || '—'} → {endDate || '—'}
-				</div>
+		<!-- Table Filter / Navigation Tabs Bar -->
+		<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/60 pb-3">
+			<div class="flex items-center gap-1 bg-muted/40 rounded-xl p-1 border border-border/50">
+				<button
+					type="button"
+					onclick={() => (activeTab = 'performance')}
+					class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer {activeTab === 'performance' ? 'bg-card text-foreground shadow-xs border border-border/30' : 'text-muted-foreground hover:text-foreground'}"
+				>
+					<Layers class="h-3.5 w-3.5" />
+					<span>Service Performance Table</span>
+				</button>
+				<button
+					type="button"
+					onclick={() => (activeTab = 'statement')}
+					class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer {activeTab === 'statement' ? 'bg-card text-foreground shadow-xs border border-border/30' : 'text-muted-foreground hover:text-foreground'}"
+				>
+					<FileText class="h-3.5 w-3.5" />
+					<span>Income Statement View</span>
+				</button>
 			</div>
 
-			<div class="overflow-x-auto">
-				<table class="w-full text-xs text-left">
-					<thead class="bg-muted/30 border-b border-border text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-						<tr>
-							<th class="py-3 px-4">Service</th>
-							<th class="py-3 px-4 text-center">Bookings</th>
-							<th class="py-3 px-4 text-right">Gross Sales (BHD)</th>
-							<th class="py-3 px-4 text-right">Supplier Cost (BHD)</th>
-							<th class="py-3 px-4 text-right">Gross Profit (BHD)</th>
-							<th class="py-3 px-4 text-center">Margin %</th>
-							<th class="py-3 px-4 text-right">Finalized Profit (BHD)</th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-border/60">
-						{#if loading && !pnlData}
-							{#each Array(7) as _}
-								<tr class="animate-pulse">
-									<td colspan="7" class="py-3 px-4"><div class="h-4 bg-muted/50 rounded"></div></td>
-								</tr>
-							{/each}
-						{:else if pnlData && pnlData.revenueItems.length > 0}
-							{#each pnlData.revenueItems as srv}
-								{@const IconComponent = getServiceIcon(srv.serviceType)}
-								<tr class="hover:bg-muted/15 transition-colors">
-									<td class="py-3 px-4 font-semibold text-foreground flex items-center gap-2">
-										<div class="p-1.5 rounded-lg bg-primary/10 text-primary">
-											<IconComponent class="h-3.5 w-3.5" />
-										</div>
-										<span>{srv.serviceLabel}</span>
-									</td>
-									<td class="py-3 px-4 text-center font-mono">
-										<span class="px-2 py-0.5 rounded-md bg-muted text-foreground text-[11px] font-bold">
-											{srv.bookingCount}
-										</span>
-									</td>
-									<td class="py-3 px-4 text-right font-mono font-bold text-foreground">
-										<MoneyDisplay amount={srv.salesAmount} />
-									</td>
-									<td class="py-3 px-4 text-right font-mono text-muted-foreground">
-										<MoneyDisplay amount={srv.costAmount} />
-									</td>
-									<td class="py-3 px-4 text-right font-mono font-bold {srv.profitAmount >= 0 ? 'text-teal-600' : 'text-rose-600'}">
-										<MoneyDisplay amount={srv.profitAmount} />
-									</td>
-									<td class="py-3 px-4 text-center font-mono">
-										<span class="px-2 py-0.5 rounded text-[11px] font-bold {srv.marginPercentage >= 30 ? 'bg-emerald-500/10 text-emerald-600' : srv.marginPercentage > 0 ? 'bg-amber-500/10 text-amber-600' : 'bg-muted text-muted-foreground'}">
-											{srv.salesAmount > 0 ? `${srv.marginPercentage.toFixed(1)}%` : '—'}
-										</span>
-									</td>
-									<td class="py-3 px-4 text-right font-mono font-bold text-emerald-600">
-										<MoneyDisplay amount={srv.finalProfitAmount} />
-									</td>
-								</tr>
-							{/each}
-						{:else}
-							<tr>
-								<td colspan="7" class="py-8 text-center text-muted-foreground">
-									No booking financial records found in the selected date range.
-								</td>
-							</tr>
-						{/if}
-					</tbody>
+			<div class="flex items-center gap-2 text-xs">
+				<Button
+					variant="outline"
+					class="h-8.5 rounded-xl cursor-pointer flex items-center gap-1.5"
+					onclick={handleExportCSV}
+					disabled={loading || !pnlData}
+				>
+					<FileSpreadsheet class="h-3.5 w-3.5" />
+					<span>CSV</span>
+				</Button>
+				<Button
+					variant="outline"
+					class="h-8.5 rounded-xl cursor-pointer flex items-center gap-1.5"
+					onclick={handleExportPDF}
+					disabled={loading || !pnlData}
+				>
+					<FileDown class="h-3.5 w-3.5" />
+					<span>PDF</span>
+				</Button>
+			</div>
+		</div>
 
-					{#if pnlData}
+		<!-- TAB 1: SERVICE PERFORMANCE TABLE -->
+		{#if activeTab === 'performance'}
+			<div class="bg-card border border-border rounded-2xl overflow-hidden shadow-xs">
+				<div class="overflow-x-auto">
+					<table class="w-full min-w-[750px] text-left border-collapse text-xs">
+						<thead>
+							<tr class="bg-muted/30 border-b border-border text-muted-foreground font-semibold">
+								<th class="p-4">Service</th>
+								<th class="p-4 text-center">Bookings</th>
+								<th class="p-4 text-right">Sales Value</th>
+								<th class="p-4 text-right">Supplier Cost</th>
+								<th class="p-4 text-right">Final Profit</th>
+								<th class="p-4 text-center">Margin %</th>
+								<th class="p-4 text-right">Open Deals Est.</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-border/60">
+							{#if pnlData.revenueItems.length > 0}
+								{#each pnlData.revenueItems as srv}
+									{@const IconComponent = getServiceIcon(srv.serviceType)}
+									{@const srvFinalMargin = srv.salesAmount > 0 ? (srv.finalProfitAmount / srv.salesAmount) * 100 : 0}
+									{@const srvOpenEst = Math.max(0, srv.profitAmount - srv.finalProfitAmount)}
+									<tr class="hover:bg-muted/10 transition-colors">
+										<td class="p-4 font-medium text-foreground">
+											<div class="flex items-center gap-2">
+												<div class="p-1.5 rounded-lg bg-primary/10 text-primary">
+													<IconComponent class="h-3.5 w-3.5" />
+												</div>
+												<span class="font-bold text-foreground">{srv.serviceLabel}</span>
+											</div>
+										</td>
+										<td class="p-4 text-center font-mono font-bold text-foreground">{srv.bookingCount}</td>
+										<td class="p-4 text-right font-mono font-bold text-foreground">
+											<MoneyDisplay amount={srv.salesAmount} />
+										</td>
+										<td class="p-4 text-right font-mono text-muted-foreground">
+											<MoneyDisplay amount={srv.costAmount} />
+										</td>
+										<td class="p-4 text-right font-mono font-bold text-teal-600 dark:text-teal-400">
+											<MoneyDisplay amount={srv.finalProfitAmount} />
+										</td>
+										<td class="p-4 text-center font-mono">
+											<span class="px-2 py-0.5 rounded text-[11px] font-bold {srv.salesAmount > 0 && srvFinalMargin >= 30 ? 'bg-emerald-500/10 text-emerald-600' : srv.finalProfitAmount > 0 ? 'bg-amber-500/10 text-amber-600' : 'bg-muted text-muted-foreground'}">
+												{srv.salesAmount > 0 ? `${srvFinalMargin.toFixed(1)}%` : '—'}
+											</span>
+										</td>
+										<td class="p-4 text-right font-mono text-muted-foreground">
+											{#if srvOpenEst > 0}
+												<MoneyDisplay amount={srvOpenEst} />
+											{:else}
+												<span class="text-muted-foreground/40">—</span>
+											{/if}
+										</td>
+									</tr>
+								{/each}
+							{:else}
+								<tr>
+									<td colspan="7" class="p-12 text-center text-muted-foreground">
+										No booking financial records found in the selected date range.
+									</td>
+								</tr>
+							{/if}
+						</tbody>
+
 						<tfoot class="bg-muted/40 border-t-2 border-border font-bold text-xs">
 							<tr>
-								<td class="py-3 px-4 uppercase text-foreground">Totals Across Services</td>
-								<td class="py-3 px-4 text-center font-mono text-primary">
+								<td class="p-4 uppercase text-foreground">Totals Across Services</td>
+								<td class="p-4 text-center font-mono text-foreground font-bold">
 									{pnlData.revenueItems.reduce((acc, x) => acc + x.bookingCount, 0)}
 								</td>
-								<td class="py-3 px-4 text-right font-mono text-foreground text-sm">
+								<td class="p-4 text-right font-mono text-foreground font-bold">
 									<MoneyDisplay amount={pnlData.grossBookingRevenue} />
 								</td>
-								<td class="py-3 px-4 text-right font-mono text-muted-foreground text-sm">
+								<td class="p-4 text-right font-mono text-muted-foreground font-bold">
 									<MoneyDisplay amount={pnlData.grossSupplierCost} />
 								</td>
-								<td class="py-3 px-4 text-right font-mono text-teal-600 text-sm">
-									<MoneyDisplay amount={pnlData.grossProfit + pnlData.approvedSalesReturns - pnlData.approvedPurchaseReturns} />
+								<td class="p-4 text-right font-mono text-teal-600 dark:text-teal-400 font-bold">
+									<MoneyDisplay amount={pnlData.finalizedGrossProfit} />
 								</td>
-								<td class="py-3 px-4 text-center font-mono text-teal-600 text-sm">
+								<td class="p-4 text-center font-mono text-teal-600 dark:text-teal-400 font-bold">
 									{pnlData.grossBookingRevenue > 0
-										? `${Math.round(((pnlData.grossProfit + pnlData.approvedSalesReturns - pnlData.approvedPurchaseReturns) / pnlData.grossBookingRevenue) * 100).toFixed(1)}%`
+										? `${((pnlData.finalizedGrossProfit / pnlData.grossBookingRevenue) * 100).toFixed(1)}%`
 										: '—'}
 								</td>
-								<td class="py-3 px-4 text-right font-mono text-emerald-600 text-sm">
-									<MoneyDisplay amount={pnlData.finalizedGrossProfit} />
+								<td class="p-4 text-right font-mono text-muted-foreground font-bold">
+									{#if pnlData.estimatedGrossProfit > 0}
+										<MoneyDisplay amount={pnlData.estimatedGrossProfit} />
+									{:else}
+										<span class="text-muted-foreground/40">—</span>
+									{/if}
 								</td>
 							</tr>
 						</tfoot>
-					{/if}
-				</table>
-			</div>
-		</div>
-	{/if}
-
-	<!-- ─── TAB 2: DETAILED INCOME STATEMENT VIEW ──────────────────────────────── -->
-	{#if activeTab === 'statement'}
-		<div class="bg-card border border-border rounded-2xl shadow-2xs overflow-hidden p-6 space-y-6">
-			<div class="border-b border-border pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-				<div>
-					<h3 class="text-base font-bold text-foreground">Operational Income Statement</h3>
-					<p class="text-xs text-muted-foreground">
-						Cascading formal financial presentation from Operating Gross Revenues down to Bottom Line Net Operating Profit.
-					</p>
-				</div>
-				<div class="text-xs text-muted-foreground font-mono bg-muted/40 px-3 py-1.5 rounded-xl border border-border/40">
-					Period: {startDate || '—'} → {endDate || '—'}
+					</table>
 				</div>
 			</div>
+		{/if}
 
-			{#if loading && !pnlData}
-				<div class="space-y-4 animate-pulse">
-					{#each Array(6) as _}
-						<div class="h-10 bg-muted/40 rounded-xl"></div>
-					{/each}
+		<!-- TAB 2: DETAILED INCOME STATEMENT VIEW -->
+		{#if activeTab === 'statement'}
+			<div class="bg-card border border-border rounded-2xl shadow-xs overflow-hidden p-5 space-y-5">
+				<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
+					<div>
+						<h3 class="text-sm font-bold text-foreground">Operational Income Statement</h3>
+						<p class="text-xs text-muted-foreground">
+							Cascading formal financial breakdown from Gross Revenue to Net Operating Profit.
+						</p>
+					</div>
+					<div class="text-xs text-muted-foreground font-mono bg-muted/40 px-2.5 py-1 rounded-lg border border-border/40">
+						{startDate || 'Start'} &rarr; {endDate || 'End'}
+					</div>
 				</div>
-			{:else if pnlData}
-				<div class="space-y-6 text-xs">
-					<!-- SECTION 1: OPERATING REVENUES -->
-					<div class="border border-border rounded-2xl overflow-hidden shadow-2xs">
+
+				<div class="space-y-4 text-xs">
+					<!-- Section 1: Operating Revenues -->
+					<div class="border border-border rounded-2xl overflow-hidden shadow-xs">
 						<button
 							type="button"
 							onclick={() => (showRevenueDetails = !showRevenueDetails)}
-							class="w-full px-5 py-3.5 bg-muted/30 hover:bg-muted/50 transition-colors flex items-center justify-between cursor-pointer border-b border-border"
+							class="w-full px-4 py-3 bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between cursor-pointer border-b border-border/80"
 						>
 							<div class="flex items-center gap-2">
 								{#if showRevenueDetails}
@@ -773,22 +797,22 @@
 								{:else}
 									<ChevronRight class="h-4 w-4 text-muted-foreground" />
 								{/if}
-								<span class="font-bold text-sm text-foreground uppercase tracking-wider">1. Operating Revenue (Gross Sales)</span>
+								<span class="font-bold text-xs uppercase tracking-wider text-foreground">1. Operating Revenue (Gross Sales)</span>
 							</div>
-							<span class="font-mono font-bold text-foreground text-sm">
+							<span class="font-mono font-bold text-foreground">
 								<MoneyDisplay amount={pnlData.netRevenue} />
 							</span>
 						</button>
 
 						{#if showRevenueDetails}
-							<div class="p-4 space-y-2.5 divide-y divide-border/40">
+							<div class="p-4 space-y-2 divide-y divide-border/40">
 								{#each pnlData.revenueItems as rev}
 									<div class="pt-2 flex items-center justify-between hover:bg-muted/10 px-2 rounded-lg">
 										<span class="text-muted-foreground flex items-center gap-2">
 											<span class="w-2 h-2 rounded-full bg-blue-500"></span>
 											Booking Revenue — {rev.serviceLabel} ({rev.bookingCount} bookings)
 										</span>
-										<span class="font-mono font-medium text-foreground"><MoneyDisplay amount={rev.salesAmount} /></span>
+										<span class="font-mono font-bold text-foreground"><MoneyDisplay amount={rev.salesAmount} /></span>
 									</div>
 								{/each}
 
@@ -804,18 +828,18 @@
 
 								<div class="pt-3 flex items-center justify-between font-bold text-foreground text-xs px-2 bg-muted/20 py-2 rounded-lg">
 									<span>Total Net Operating Revenue</span>
-									<span class="font-mono text-sm"><MoneyDisplay amount={pnlData.netRevenue} /></span>
+									<span class="font-mono font-bold"><MoneyDisplay amount={pnlData.netRevenue} /></span>
 								</div>
 							</div>
 						{/if}
 					</div>
 
-					<!-- SECTION 2: COST OF GOODS SOLD -->
-					<div class="border border-border rounded-2xl overflow-hidden shadow-2xs">
+					<!-- Section 2: Cost of Sales -->
+					<div class="border border-border rounded-2xl overflow-hidden shadow-xs">
 						<button
 							type="button"
 							onclick={() => (showCostDetails = !showCostDetails)}
-							class="w-full px-5 py-3.5 bg-muted/30 hover:bg-muted/50 transition-colors flex items-center justify-between cursor-pointer border-b border-border"
+							class="w-full px-4 py-3 bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between cursor-pointer border-b border-border/80"
 						>
 							<div class="flex items-center gap-2">
 								{#if showCostDetails}
@@ -823,22 +847,22 @@
 								{:else}
 									<ChevronRight class="h-4 w-4 text-muted-foreground" />
 								{/if}
-								<span class="font-bold text-sm text-foreground uppercase tracking-wider">2. Cost of Sales (Direct Supplier Costs)</span>
+								<span class="font-bold text-xs uppercase tracking-wider text-foreground">2. Cost of Sales (Direct Supplier Costs)</span>
 							</div>
-							<span class="font-mono font-bold text-foreground text-sm">
+							<span class="font-mono font-bold text-foreground">
 								<MoneyDisplay amount={pnlData.netCostOfSales} />
 							</span>
 						</button>
 
 						{#if showCostDetails}
-							<div class="p-4 space-y-2.5 divide-y divide-border/40">
+							<div class="p-4 space-y-2 divide-y divide-border/40">
 								{#each pnlData.costOfSalesItems as cost}
 									<div class="pt-2 flex items-center justify-between hover:bg-muted/10 px-2 rounded-lg">
 										<span class="text-muted-foreground flex items-center gap-2">
 											<span class="w-2 h-2 rounded-full bg-amber-500"></span>
 											Supplier Cost — {cost.serviceLabel}
 										</span>
-										<span class="font-mono font-medium text-foreground"><MoneyDisplay amount={cost.costAmount} /></span>
+										<span class="font-mono font-bold text-foreground"><MoneyDisplay amount={cost.costAmount} /></span>
 									</div>
 								{/each}
 
@@ -854,43 +878,45 @@
 
 								<div class="pt-3 flex items-center justify-between font-bold text-foreground text-xs px-2 bg-muted/20 py-2 rounded-lg">
 									<span>Total Cost of Goods Sold (COGS)</span>
-									<span class="font-mono text-sm"><MoneyDisplay amount={pnlData.netCostOfSales} /></span>
+									<span class="font-mono font-bold"><MoneyDisplay amount={pnlData.netCostOfSales} /></span>
 								</div>
 							</div>
 						{/if}
 					</div>
 
-					<!-- SECTION: GROSS PROFIT BANNER -->
-					<div class="p-4 rounded-2xl bg-teal-500/10 border border-teal-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+					<!-- Banner: Gross Trading Margin -->
+					<div class="p-4 rounded-2xl bg-card border border-border shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
 						<div class="space-y-0.5">
-							<span class="text-xs font-bold text-teal-700 uppercase tracking-wider block">
-								Gross Trading Margin
+							<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">
+								Gross Trading Margin (Finalized)
 							</span>
-							<h4 class="text-xl font-bold font-mono text-teal-600">
-								<MoneyDisplay amount={pnlData.grossProfit} />
+							<h4 class="text-lg font-bold font-mono text-teal-600 dark:text-teal-400">
+								<MoneyDisplay amount={finalGrossProfit} />
 							</h4>
-							<p class="text-[11px] text-teal-700/80">
-								Gross Margin: <strong>{pnlData.grossMarginPercentage.toFixed(1)}%</strong>
-								(Revenue: {pnlData.netRevenue.toFixed(3)} - COGS: {pnlData.netCostOfSales.toFixed(3)})
+							<p class="text-[11px] text-muted-foreground">
+								Finalized Margin: <strong class="font-mono text-teal-600 dark:text-teal-400">{finalGrossMargin.toFixed(1)}%</strong>
+								(Finalized Profit: {finalGrossProfit.toFixed(3)} BHD)
 							</p>
 						</div>
 
 						<div class="text-xs font-mono space-y-1 sm:text-right">
-							<div class="text-emerald-700 font-semibold">
-								Finalized Profit (Closed Deals): <strong>{pnlData.finalizedGrossProfit.toFixed(3)} BHD</strong>
+							<div class="text-teal-600 dark:text-teal-400 font-bold">
+								Finalized Profit (Closed Deals): <strong>{finalGrossProfit.toFixed(3)} BHD</strong>
 							</div>
-							<div class="text-muted-foreground">
-								Estimated Profit (Open Deals): <strong>{pnlData.estimatedGrossProfit.toFixed(3)} BHD</strong>
-							</div>
+							{#if pnlData.estimatedGrossProfit > 0}
+								<div class="text-muted-foreground">
+									Estimated Profit (Open Deals): <strong>{pnlData.estimatedGrossProfit.toFixed(3)} BHD</strong>
+								</div>
+							{/if}
 						</div>
 					</div>
 
-					<!-- SECTION 3: OPERATING EXPENSES -->
-					<div class="border border-border rounded-2xl overflow-hidden shadow-2xs">
+					<!-- Section 3: Operating Expenses -->
+					<div class="border border-border rounded-2xl overflow-hidden shadow-xs">
 						<button
 							type="button"
 							onclick={() => (showExpenseDetails = !showExpenseDetails)}
-							class="w-full px-5 py-3.5 bg-muted/30 hover:bg-muted/50 transition-colors flex items-center justify-between cursor-pointer border-b border-border"
+							class="w-full px-4 py-3 bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between cursor-pointer border-b border-border/80"
 						>
 							<div class="flex items-center gap-2">
 								{#if showExpenseDetails}
@@ -898,15 +924,15 @@
 								{:else}
 									<ChevronRight class="h-4 w-4 text-muted-foreground" />
 								{/if}
-								<span class="font-bold text-sm text-foreground uppercase tracking-wider">3. Operating Expenses (Overheads & Payroll)</span>
+								<span class="font-bold text-xs uppercase tracking-wider text-foreground">3. Operating Expenses (Overheads & Payroll)</span>
 							</div>
-							<span class="font-mono font-bold text-foreground text-sm">
+							<span class="font-mono font-bold text-foreground">
 								<MoneyDisplay amount={pnlData.totalOperatingExpenses} />
 							</span>
 						</button>
 
 						{#if showExpenseDetails}
-							<div class="p-4 space-y-2.5 divide-y divide-border/40">
+							<div class="p-4 space-y-2 divide-y divide-border/40">
 								{#if pnlData.expenseItems.length === 0 && pnlData.totalPayrollExpenses === 0}
 									<div class="py-4 text-center text-muted-foreground text-xs">
 										No operational expenses or salary payouts recorded in this period.
@@ -918,7 +944,7 @@
 												<span class="w-2 h-2 rounded-full bg-rose-500"></span>
 												Operating Expense — {exp.categoryName} ({exp.expenseCount} claims)
 											</span>
-											<span class="font-mono font-medium text-foreground"><MoneyDisplay amount={exp.totalAmount} /></span>
+											<span class="font-mono font-bold text-foreground"><MoneyDisplay amount={exp.totalAmount} /></span>
 										</div>
 									{/each}
 
@@ -928,130 +954,51 @@
 												<span class="w-2 h-2 rounded-full bg-indigo-500"></span>
 												Staff Salaries, Allowances & Commissions (Payroll)
 											</span>
-											<span class="font-mono font-medium text-foreground"><MoneyDisplay amount={pnlData.totalPayrollExpenses} /></span>
+											<span class="font-mono font-bold text-foreground"><MoneyDisplay amount={pnlData.totalPayrollExpenses} /></span>
 										</div>
 									{/if}
 								{/if}
 
 								<div class="pt-3 flex items-center justify-between font-bold text-foreground text-xs px-2 bg-muted/20 py-2 rounded-lg">
 									<span>Total Operating Expenses</span>
-									<span class="font-mono text-sm"><MoneyDisplay amount={pnlData.totalOperatingExpenses} /></span>
+									<span class="font-mono font-bold"><MoneyDisplay amount={pnlData.totalOperatingExpenses} /></span>
 								</div>
 							</div>
 						{/if}
 					</div>
 
-					<!-- SECTION 4: NET OPERATING PROFIT BOTTOM LINE -->
-					<div class="p-6 rounded-2xl border-2 {pnlData.isProfitable ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-950' : 'bg-rose-500/10 border-rose-500/40 text-rose-950'} flex flex-col md:flex-row md:items-center justify-between gap-4">
+					<!-- Section 4: Net Operating Profit Bottom Line -->
+					<div class="p-5 rounded-2xl border {isFinalNetProfitable ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-rose-500/5 border-rose-500/30'} flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
 						<div class="space-y-1">
-							<span class="text-xs font-bold uppercase tracking-wider block opacity-80">
-								Bottom Line Result
+							<span class="text-[11px] font-bold uppercase tracking-wider block opacity-80 {isFinalNetProfitable ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}">
+								Bottom Line Result (Finalized)
 							</span>
-							<h3 class="text-2xl font-bold font-mono {pnlData.isProfitable ? 'text-emerald-600' : 'text-rose-600'}">
-								{pnlData.isProfitable ? 'NET OPERATING PROFIT:' : 'NET OPERATING LOSS:'}
-								<MoneyDisplay amount={pnlData.netProfit} />
+							<h3 class="text-xl font-bold font-mono {isFinalNetProfitable ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+								{isFinalNetProfitable ? 'NET OPERATING PROFIT:' : 'NET OPERATING LOSS:'}
+								<MoneyDisplay amount={finalNetProfit} />
 							</h3>
 							<p class="text-xs text-muted-foreground">
-								Net Profit Margin: <strong class="font-mono {pnlData.isProfitable ? 'text-emerald-600' : 'text-rose-600'}">{pnlData.netMarginPercentage.toFixed(1)}%</strong>
-								(Gross Profit {pnlData.grossProfit.toFixed(3)} - Operating Expenses {pnlData.totalOperatingExpenses.toFixed(3)})
+								Net Profit Margin: <strong class="font-mono {isFinalNetProfitable ? 'text-emerald-600' : 'text-rose-600'}">{finalNetMargin.toFixed(1)}%</strong>
+								(Finalized Profit {finalGrossProfit.toFixed(3)} - Operating Expenses {pnlData.totalOperatingExpenses.toFixed(3)})
 							</p>
 						</div>
 
-						<div class="bg-card/80 backdrop-blur-xs p-3.5 rounded-xl border border-border/60 text-xs space-y-1 font-mono">
+						<div class="bg-card p-3 rounded-xl border border-border text-xs space-y-1 font-mono shadow-xs">
 							<div class="flex justify-between gap-4">
 								<span class="text-muted-foreground">Finalized Net Profit:</span>
-								<strong class={pnlData.finalizedNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-									{pnlData.finalizedNetProfit.toFixed(3)} BHD
+								<strong class={isFinalNetProfitable ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
+									{finalNetProfit.toFixed(3)} BHD
 								</strong>
 							</div>
 							<div class="flex justify-between gap-4">
 								<span class="text-muted-foreground">Finalized Margin:</span>
-								<strong>{pnlData.finalizedNetMarginPercentage.toFixed(1)}%</strong>
+								<strong>{finalNetMargin.toFixed(1)}%</strong>
 							</div>
 						</div>
 					</div>
 				</div>
-			{/if}
-		</div>
-	{/if}
-
-	<!-- ─── TAB 3: FORMAL GENERAL LEDGER P&L (ACCRUAL COA) ─────────────────────── -->
-	{#if activeTab === 'gl'}
-		<div class="bg-card border border-border rounded-2xl p-6 shadow-2xs space-y-6">
-			<div class="space-y-2">
-				<h3 class="text-base font-bold text-foreground flex items-center gap-2">
-					<BookOpen class="h-5 w-5 text-primary" />
-					Formal General Ledger Income Statement (GAAP Accrual)
-				</h3>
-				<p class="text-xs text-muted-foreground leading-relaxed max-w-2xl">
-					Texas Portals incorporates a complete double-entry General Ledger engine based on Chart of Accounts (COA) 4000-series (Revenues) and 5000-series (Expenses).
-				</p>
 			</div>
-
-			<div class="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-900 space-y-2 text-xs">
-				<div class="flex items-center gap-2 font-bold text-amber-800">
-					<AlertCircle class="h-4 w-4" />
-					<span>Chart of Accounts (COA) Status</span>
-				</div>
-				<p class="leading-relaxed text-amber-800/90">
-					The Chart of Accounts in the current database is unseeded. The accounting system operates with <code>BypassValidationWhenCoaEmpty: true</code>, utilizing the live <strong>Operational Income Statement</strong> (Tabs 1 & 2) as the single source of truth for business profitability across all 7 travel modules.
-				</p>
-			</div>
-
-			<div class="flex items-center gap-3">
-				<Button
-					variant="default"
-					size="sm"
-					onclick={() => goto('/accounting/ledger')}
-					class="h-9 gap-1.5 rounded-xl cursor-pointer"
-				>
-					<span>Open General Ledger Explorer</span>
-					<ArrowRight class="h-3.5 w-3.5" />
-				</Button>
-
-				<Button
-					variant="outline"
-					size="sm"
-					onclick={() => goto('/accounting/chart-of-accounts')}
-					class="h-9 gap-1.5 rounded-xl cursor-pointer"
-				>
-					<span>View Chart of Accounts Hierarchy</span>
-					<ExternalLink class="h-3.5 w-3.5" />
-				</Button>
-			</div>
-		</div>
-	{/if}
-
-	<!-- ─── RECONCILIATION & DATA AUDIT FOOTER ─────────────────────────────────── -->
-	{#if pnlData}
-		<div class="p-4 rounded-2xl bg-card border border-border flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs shadow-2xs">
-			<div class="flex items-center gap-2.5">
-				{#if pnlData.reconciled}
-					<div class="p-1 rounded-full bg-emerald-500/10 text-emerald-600">
-						<ShieldCheck class="h-4 w-4" />
-					</div>
-					<div class="space-y-0.5">
-						<span class="font-bold text-foreground">Reconciliation Status: Verified</span>
-						<p class="text-[11px] text-muted-foreground">
-							Totals match Salesmen report and Sales Entries for the selected period (Variance: 0.000 BHD).
-						</p>
-					</div>
-				{:else}
-					<div class="p-1 rounded-full bg-amber-500/10 text-amber-600">
-						<AlertCircle class="h-4 w-4" />
-					</div>
-					<div class="space-y-0.5">
-						<span class="font-bold text-amber-600">Reconciliation Variance</span>
-						<p class="text-[11px] text-muted-foreground">{pnlData.reconciliationMessage}</p>
-					</div>
-				{/if}
-			</div>
-
-			<div class="text-[11px] text-muted-foreground font-mono space-y-0.5 md:text-right">
-				<div>Data Sources: {pnlData.dataSourcesStatus}</div>
-				<div>Generated At: {new Date(pnlData.generatedAt).toLocaleString()}</div>
-			</div>
-		</div>
+		{/if}
 	{/if}
 </div>
 

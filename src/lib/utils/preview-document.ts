@@ -72,6 +72,7 @@ export async function previewDocument(
 		else if (cleanType.includes('payment') || cleanType.includes('expense')) normalizedType = 'payments';
 		else if (cleanType.includes('transaction') || cleanType.includes('return')) normalizedType = 'transactions';
 		else if (cleanType.includes('approval') || cleanType.includes('pending')) normalizedType = 'pending-approvals';
+		else if (cleanType.includes('profit') || cleanType.includes('pnl')) normalizedType = 'profit-loss-operational';
 
 		endpoint = `/api/documents/report/${normalizedType}`;
 		if (typeof idOrFilters === 'number' || typeof idOrFilters === 'string') {
