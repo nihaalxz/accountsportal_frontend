@@ -332,9 +332,12 @@
 				end.setHours(23, 59, 59, 999);
 				params.endDate = end.toISOString();
 			}
-			const res = await apiFetch<SalesmanProfitRecord[]>(`api/sales-entries/salesmen/${salesmanId}/profit-records`, { params });
+			const [res, dbMods] = await Promise.all([
+				apiFetch<SalesmanProfitRecord[]>(`api/sales-entries/salesmen/${salesmanId}/profit-records`, { params }).catch(() => []),
+				apiFetch<any[]>(`api/sales-entries/profit-adjustments`, { params: { salesmanId } }).catch(() => [])
+			]);
 			const rawRecords = res || [];
-			const mods = loadModificationHistory();
+			const mods = (Array.isArray(dbMods) && dbMods.length > 0) ? dbMods : loadModificationHistory();
 
 			// Merge with persistent modification history so adjusted profit amounts are always reflected
 			profitRecordsData = rawRecords.map((r) => {

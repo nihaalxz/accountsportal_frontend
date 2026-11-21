@@ -362,10 +362,27 @@
 		try {
 			loadModificationHistory();
 
-			const [salesmenRes, reportRes] = await Promise.all([
+			const [salesmenRes, reportRes, historyRes] = await Promise.all([
 				apiFetch<any[]>('api/sales-entries/salesmen').catch(() => []),
-				apiFetch<any[]>('api/sales-entries/salesmen/report').catch(() => [])
+				apiFetch<any[]>('api/sales-entries/salesmen/report').catch(() => []),
+				apiFetch<ProfitModificationItem[]>('api/sales-entries/profit-adjustments').catch(() => [])
 			]);
+
+			if (Array.isArray(historyRes) && historyRes.length > 0) {
+				modificationHistory = historyRes.map((h: any) => ({
+					...h,
+					id: String(h.id),
+					payableAmount: Number(h.payableAmount || 0),
+					previousProfit: Number(h.previousProfit || 0),
+					newProfit: Number(h.newProfit || 0),
+					deltaAmount: Number(h.deltaAmount || 0)
+				}));
+				if (typeof localStorage !== 'undefined') {
+					try {
+						localStorage.setItem('tx_profit_modification_history', JSON.stringify(modificationHistory));
+					} catch (e) {}
+				}
+			}
 
 			const reportMap = new Map<number, any>();
 			(Array.isArray(reportRes) ? reportRes : []).forEach((r) => {
