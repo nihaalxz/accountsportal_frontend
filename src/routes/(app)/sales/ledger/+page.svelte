@@ -8,6 +8,7 @@
 	import { DateDisplay } from '$lib/components';
 	import { getBahrainPresetRanges, getBahrainDateString, formatDateOnly } from '$lib/formatters/date';
 	import { Button } from '$lib/components/ui/button';
+	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import {
 		Printer,
 		Download,
@@ -19,6 +20,8 @@
 		Search,
 		User,
 		UserCheck,
+		Users,
+		Briefcase,
 		ChevronDown,
 		Check,
 		X,
@@ -31,6 +34,20 @@
 	// URL query params
 	let urlHeadId = $derived($page.url.searchParams.get('headId'));
 	let urlType = $derived($page.url.searchParams.get('type'));
+	let urlSalesmanId = $derived($page.url.searchParams.get('salesmanId'));
+
+	// Salesman Filter
+	let salesmen = $state<any[]>([]);
+	let selectedSalesmanId = $state<string>('all');
+	let loadingSalesmen = $state(false);
+
+	const salesmanOptions = $derived([
+		{ id: 'all', name: 'All Salesmen' },
+		...salesmen.map((s) => ({
+			id: String(s.id),
+			name: s.name
+		}))
+	]);
 
 	// Category Filter
 	let selectedCategory = $state<'all' | 'customer' | 'agent'>('all');
@@ -56,11 +73,43 @@
 		return `${acc.type || 'customer'}_${acc.id}`;
 	}
 
+	// Load Salesmen List
+	async function loadSalesmen() {
+		loadingSalesmen = true;
+		try {
+			const res = await apiFetch<any[]>('api/sales-entries/salesmen');
+			salesmen = res || [];
+		} catch (err) {
+			console.error('Failed to load salesmen list:', err);
+		} finally {
+			loadingSalesmen = false;
+		}
+	}
+
+	// Handle Salesman Filter Change
+	async function handleSalesmanChange(val: string | number) {
+		selectedSalesmanId = String(val);
+		await loadDirectory();
+		// If currently selected account is not in the filtered accountsList, switch to first account or null
+		if (selectedAccount) {
+			const stillExists = accountsList.some(
+				(a) => String(a.id) === String(selectedAccount.id) && a.type === selectedAccount.type
+			);
+			if (!stillExists && accountsList.length > 0) {
+				selectAccount(accountsList[0]);
+			} else if (accountsList.length === 0) {
+				selectedAccount = null;
+				ledgerEntries = [];
+			}
+		}
+	}
+
 	// Load Directory of Customers & Agents
 	async function loadDirectory(autoSelectFirst: boolean = false) {
 		try {
 			const typeParam = selectedCategory !== 'all' ? `&type=${selectedCategory}` : '';
-			const res = await apiFetch<any>(`api/sales-entries/heads?pageSize=500${typeParam}`);
+			const salesmanParam = selectedSalesmanId !== 'all' ? `&salesmanId=${selectedSalesmanId}` : '';
+			const res = await apiFetch<any>(`api/sales-entries/heads?pageSize=500${typeParam}${salesmanParam}`);
 			if (res && res.items) {
 				accountsList = res.items;
 
@@ -177,7 +226,13 @@
 	}
 
 	onMount(async () => {
-		await loadDirectory(true);
+		if (urlSalesmanId) {
+			selectedSalesmanId = urlSalesmanId;
+		}
+		await Promise.all([
+			loadSalesmen(),
+			loadDirectory(true)
+		]);
 		realtimeController = new LedgerRealtimeController({
 			getHeadId: () => selectedAccount?.id,
 			onLedgerChanged: () => {
@@ -203,6 +258,7 @@
 				(a.lastName && a.lastName.toLowerCase().includes(q)) ||
 				(a.email && a.email.toLowerCase().includes(q)) ||
 				(a.mobileNo && a.mobileNo.includes(q)) ||
+				(a.salesmanName && a.salesmanName.toLowerCase().includes(q)) ||
 				String(a.id).includes(q)
 		);
 	});
@@ -480,11 +536,30 @@
 
 	<!-- Control Panel Card: Category Filter & Account Search Combobox -->
 	<div class="bg-card border border-border rounded-2xl p-5 space-y-4 print:hidden shadow-xs">
-		<div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
+		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-4 items-end">
+			<!-- Salesman Filter Dropdown -->
+			<div class="md:col-span-1 lg:col-span-3 space-y-1.5">
+				<label for="salesman-filter" class="block text-[10px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1">
+					<Briefcase class="h-3 w-3 text-primary" />
+					<span>Filter by Salesman</span>
+				</label>
+				<SearchableSelect
+					id="salesman-filter"
+					options={salesmanOptions}
+					value={selectedSalesmanId}
+					onchange={handleSalesmanChange}
+					placeholder="All Salesmen"
+					searchPlaceholder="Search salesmen..."
+				/>
+			</div>
+
 			<!-- Category Filter Pills -->
-			<div class="lg:col-span-4 space-y-1.5">
-				<span class="block text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Account Category</span>
-				<div class="flex bg-muted/40 p-1 rounded-xl border border-border gap-1">
+			<div class="md:col-span-1 lg:col-span-3 space-y-1.5">
+				<span class="block text-[10px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1">
+					<Users class="h-3 w-3 text-primary" />
+					<span>Account Category</span>
+				</span>
+				<div class="flex bg-muted/40 p-1 rounded-xl border border-border gap-1 h-9.5 items-center">
 					<button
 						type="button"
 						onclick={() => setCategoryFilter('all')}
@@ -512,17 +587,24 @@
 			</div>
 
 			<!-- Searchable Combobox Account Selector -->
-			<div class="lg:col-span-8 space-y-1.5 relative">
-				<label for="combobox-trigger" class="block text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
-					Select Account
-				</label>
+			<div class="md:col-span-2 lg:col-span-6 space-y-1.5 relative">
+				<div class="flex items-center justify-between">
+					<label for="combobox-trigger" class="block text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+						Select Account ({accountsList.length} available)
+					</label>
+					{#if selectedSalesmanId !== 'all'}
+						<span class="text-[10px] text-primary font-medium flex items-center gap-1">
+							Filtered by: {salesmanOptions.find(o => o.id === selectedSalesmanId)?.name || 'Salesman'}
+						</span>
+					{/if}
+				</div>
 				
 				<div class="relative">
 					<button
 						id="combobox-trigger"
 						type="button"
 						onclick={() => (isDropdownOpen = !isDropdownOpen)}
-						class="w-full text-xs p-2.5 pl-3 pr-10 border border-border rounded-xl bg-background text-foreground flex items-center justify-between text-left focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer shadow-xs"
+						class="w-full text-xs h-9.5 px-3 border border-border rounded-xl bg-background text-foreground flex items-center justify-between text-left focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer shadow-xs"
 					>
 						{#if selectedAccount}
 							<div class="flex items-center gap-2 truncate">
@@ -530,6 +612,11 @@
 									{selectedAccount.type === 'agent' ? 'AGENT' : 'CUSTOMER'}
 								</span>
 								<span class="font-bold">{selectedAccount.firstName} {selectedAccount.lastName}</span>
+								{#if selectedAccount.salesmanName}
+									<span class="px-1.5 py-0.5 text-[9px] font-bold uppercase rounded bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+										{selectedAccount.salesmanName}
+									</span>
+								{/if}
 								<span class="text-muted-foreground text-[11px]">({selectedAccount.email || selectedAccount.mobileNo || 'No contact'})</span>
 							</div>
 						{:else}
