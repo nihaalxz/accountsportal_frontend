@@ -3,7 +3,7 @@
 	import { apiFetch } from '$lib/api/api-client';
 	import MoneyDisplay from '$lib/components/MoneyDisplay.svelte';
 	import { DateDisplay } from '$lib/components';
-	import { getBahrainPresetRanges, formatDate, formatDateTime, formatBahrainTime, getBahrainDateString } from '$lib/formatters/date';
+	import { formatDate, formatDateTime, formatBahrainTime, getBahrainDateString } from '$lib/formatters/date';
 	import SearchableSelect from '$lib/components/SearchableSelect.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { toast } from '$lib/stores/toast';
@@ -15,7 +15,7 @@
 		DollarSign,
 		Search,
 		RefreshCw,
-		Download,
+		FileSpreadsheet,
 		CheckCircle2,
 		AlertCircle,
 		ShieldAlert,
@@ -28,19 +28,15 @@
 		Layers,
 		X,
 		Save,
-		Target,
 		Edit3,
 		ChevronLeft,
 		ChevronRight,
 		SlidersHorizontal,
 		RotateCcw,
-		Award,
-		BarChart3,
-		Check,
-		HelpCircle,
 		History,
 		Clock,
 		ArrowRight,
+		ArrowUpDown,
 		ExternalLink,
 		Briefcase
 	} from 'lucide-svelte';
@@ -94,6 +90,9 @@
 		modifiedBy?: string;
 	}
 
+	type PresetType = 'all' | 'today' | 'this_week' | 'this_month' | 'last_30' | 'this_year';
+	type SortField = 'date' | 'doc' | 'salesman' | 'sale' | 'cost' | 'profit';
+
 	let loading = $state(true);
 	let activeViewTab = $state<'records' | 'history'>('records');
 
@@ -104,6 +103,11 @@
 	let searchQuery = $state('');
 	let startDate = $state('');
 	let endDate = $state('');
+	let activePreset = $state<PresetType>('all');
+
+	// Sorting
+	let sortField = $state<SortField>('date');
+	let sortDirection = $state<'asc' | 'desc'>('desc');
 
 	// Pagination for Profit Records
 	let currentPage = $state(1);
@@ -119,7 +123,7 @@
 	// Profit Adjustment Modal State
 	let showAdjustModal = $state(false);
 	let adjustingRecord = $state<ProfitRecord | null>(null);
-	let adjustMode = $state<'direct' | 'delta'>('direct'); // 'direct' = edit profit itself, 'delta' = adjust delta
+	let adjustMode = $state<'direct' | 'delta'>('direct');
 	let targetProfitAmount = $state<string>('');
 	let adjustDeltaAmount = $state<string>('');
 	let adjustReason = $state('');
@@ -138,7 +142,57 @@
 		}))
 	]);
 
-	// Helper to get modification count for a record
+	// ─── Date Preset Helpers ────────────────────────────────────────────────────
+	function formatDateForInput(date: Date): string {
+		const year = date.getFullYear();
+		const month = String(date.getMonth() + 1).padStart(2, '0');
+		const day = String(date.getDate()).padStart(2, '0');
+		return `${year}-${month}-${day}`;
+	}
+
+	function calculatePresetRange(preset: PresetType): { start: string; end: string } {
+		const now = new Date();
+		const todayStr = formatDateForInput(now);
+
+		if (preset === 'today') {
+			return { start: todayStr, end: todayStr };
+		} else if (preset === 'this_week') {
+			const startOfWeek = new Date(now);
+			const dayOfWeek = (now.getDay() + 6) % 7; // Monday = 0
+			startOfWeek.setDate(now.getDate() - dayOfWeek);
+			startOfWeek.setHours(0, 0, 0, 0);
+			return { start: formatDateForInput(startOfWeek), end: todayStr };
+		} else if (preset === 'this_month') {
+			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+			return { start: formatDateForInput(startOfMonth), end: todayStr };
+		} else if (preset === 'last_30') {
+			const past30 = new Date();
+			past30.setDate(now.getDate() - 30);
+			return { start: formatDateForInput(past30), end: todayStr };
+		} else if (preset === 'this_year') {
+			const startOfYear = new Date(now.getFullYear(), 0, 1);
+			return { start: formatDateForInput(startOfYear), end: todayStr };
+		} else {
+			return { start: '', end: '' };
+		}
+	}
+
+	function setPreset(preset: PresetType) {
+		activePreset = preset;
+		const { start, end } = calculatePresetRange(preset);
+		startDate = start;
+		endDate = end;
+		currentPage = 1;
+		historyPage = 1;
+	}
+
+	function handleCustomDateChange() {
+		activePreset = 'all';
+		currentPage = 1;
+		historyPage = 1;
+	}
+
+	// ─── Helpers for Modifications ──────────────────────────────────────────────
 	function getRecordModificationsCount(r: ProfitRecord): number {
 		const doc = (r.documentNumber || '').trim().toLowerCase();
 		const bId = r.bookingId;
@@ -150,7 +204,6 @@
 		}).length;
 	}
 
-	// Helper to get all modification items for a record
 	function getRecordModifications(r: ProfitRecord): ProfitModificationItem[] {
 		const doc = (r.documentNumber || '').trim().toLowerCase();
 		const bId = r.bookingId;
@@ -162,9 +215,19 @@
 		});
 	}
 
-	// Derived: Filtered profit records
+	// ─── Sorting Helper ─────────────────────────────────────────────────────────
+	function handleSort(field: SortField) {
+		if (sortField === field) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortField = field;
+			sortDirection = 'desc';
+		}
+	}
+
+	// ─── Derived: Filtered & Sorted Profit Records ──────────────────────────────
 	const filteredRecords = $derived.by(() => {
-		return allProfitRecords.filter((r) => {
+		let list = allProfitRecords.filter((r) => {
 			if (selectedSalesmanId !== 'all' && String(r.salesmanId) !== selectedSalesmanId) {
 				return false;
 			}
@@ -192,9 +255,51 @@
 			}
 			return true;
 		});
+
+		// Apply sort
+		list = [...list].sort((a, b) => {
+			let valA: any;
+			let valB: any;
+
+			switch (sortField) {
+				case 'doc':
+					valA = a.documentNumber || `#${a.bookingId}`;
+					valB = b.documentNumber || `#${b.bookingId}`;
+					break;
+				case 'salesman':
+					valA = a.salesmanName || '';
+					valB = b.salesmanName || '';
+					break;
+				case 'sale':
+					valA = a.payableAmount || 0;
+					valB = b.payableAmount || 0;
+					break;
+				case 'cost':
+					valA = a.finalSupplierCost || 0;
+					valB = b.finalSupplierCost || 0;
+					break;
+				case 'profit':
+					valA = a.profitAmount || 0;
+					valB = b.profitAmount || 0;
+					break;
+				case 'date':
+				default:
+					valA = new Date(a.bookingCreatedAt || 0).getTime();
+					valB = new Date(b.bookingCreatedAt || 0).getTime();
+					break;
+			}
+
+			if (typeof valA === 'string' && typeof valB === 'string') {
+				return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+			} else {
+				return sortDirection === 'asc' ? (valA as number) - (valB as number) : (valB as number) - (valA as number);
+			}
+		});
+
+		return list;
 	});
 
-	// Derived: Filtered modification history
+	// ─── Derived: Filtered Modification History ─────────────────────────────────
 	const filteredHistory = $derived.by(() => {
 		return modificationHistory.filter((h) => {
 			if (selectedSalesmanId !== 'all' && String(h.salesmanId) !== selectedSalesmanId) {
@@ -403,8 +508,6 @@
 				};
 			});
 
-			// Fetch booking client names mapping in parallel to guarantee clientName is resolved
-			// even if backend response has missing or null client names
 			const [flightRes, hotelRes, visaRes, vfsRes, holidayRes, transportRes, otherRes] = await Promise.all([
 				apiFetch<any>('api/sales-entries/flights', { params: { pageSize: 1000 } }).catch(() => null),
 				apiFetch<any>('api/sales-entries/hotels', { params: { pageSize: 1000 } }).catch(() => null),
@@ -454,7 +557,6 @@
 			const recordsArrays = await Promise.all(recordPromises);
 			const rawRecords = recordsArrays.flat();
 
-			// Enrich modification history with client names if missing
 			modificationHistory = modificationHistory.map((h) => {
 				if (h.clientName) return h;
 				const doc = (h.documentNumber || '').trim().toLowerCase();
@@ -464,7 +566,6 @@
 				return resolved ? { ...h, clientName: resolved } : h;
 			});
 
-			// Merge with persistent modification history so adjusted profit amounts are always reflected
 			allProfitRecords = rawRecords.map((r) => {
 				const doc = (r.documentNumber || '').trim().toLowerCase();
 				const bId = r.bookingId;
@@ -498,36 +599,9 @@
 		searchQuery = '';
 		startDate = '';
 		endDate = '';
+		activePreset = 'all';
 		currentPage = 1;
 		historyPage = 1;
-	}
-
-	function setQuickDatePreset(preset: 'all' | 'month' | 'lastMonth' | 'today') {
-		currentPage = 1;
-		historyPage = 1;
-		if (preset === 'all') {
-			startDate = '';
-			endDate = '';
-		} else if (preset === 'today') {
-			const ranges = getBahrainPresetRanges();
-			startDate = ranges.today.startDate;
-			endDate = ranges.today.endDate;
-		} else if (preset === 'month') {
-			const ranges = getBahrainPresetRanges();
-			startDate = ranges.thisMonth.startDate;
-			endDate = ranges.thisMonth.endDate;
-		} else if (preset === 'lastMonth') {
-			const now = new Date();
-			const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Bahrain', year: 'numeric', month: 'numeric' }).formatToParts(now);
-			const year = parseInt(parts.find((p) => p.type === 'year')?.value || '2026', 10);
-			const month = parseInt(parts.find((p) => p.type === 'month')?.value || '1', 10);
-			const prevMonthDate = new Date(year, month - 2, 1);
-			const prevYear = prevMonthDate.getFullYear();
-			const prevMonth = prevMonthDate.getMonth() + 1;
-			const lastDay = new Date(prevYear, prevMonth, 0).getDate();
-			startDate = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`;
-			endDate = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-		}
 	}
 
 	function openAdjustModal(r: ProfitRecord) {
@@ -574,10 +648,8 @@
 		const recordDoc = adjustingRecord.documentNumber || `#${adjustingRecord.bookingId}`;
 
 		try {
-			// Immediate local update for reactive UI feedback
 			adjustingRecord.profitAmount = finalProfit;
 
-			// Update in allProfitRecords list
 			const matchIndex = allProfitRecords.findIndex(
 				(item) => item.bookingType === adjustingRecord!.bookingType && item.bookingId === adjustingRecord!.bookingId
 			);
@@ -589,7 +661,6 @@
 				};
 			}
 
-			// Record in persistent audit history
 			const historyItem: ProfitModificationItem = {
 				id: `mod_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
 				recordId: adjustingRecord.id,
@@ -609,13 +680,12 @@
 			};
 			saveModificationHistory(historyItem);
 
-			// Submit to backend
 			await apiFetch('api/sales-entries/profit-adjustments', {
 				method: 'POST',
 				body: JSON.stringify({
 					bookingType: adjustingRecord.bookingType,
 					bookingIdOrRef: String(adjustingRecord.bookingId),
-					adjustmentType: 2, // ManualAdjustment
+					adjustmentType: 2,
 					amount: delta,
 					referenceType: 'manual_adjustment',
 					referenceId: adjustingRecord.documentNumber || String(adjustingRecord.bookingId),
@@ -627,7 +697,6 @@
 			toast.success(`Profit updated to ${finalProfit.toFixed(3)} BHD (${delta >= 0 ? '+' : ''}${delta.toFixed(3)} BHD) for ${recordDoc}`);
 			showAdjustModal = false;
 
-			// Refresh data in background
 			await loadAllData();
 		} catch (err: any) {
 			console.error('Failed to apply profit adjustment:', err);
@@ -721,7 +790,7 @@
 </svelte:head>
 
 {#if !hasRole('master_accountant')}
-	<div class="p-12 text-center border border-border rounded-2xl bg-card space-y-4 max-w-lg mx-auto my-12 shadow-sm">
+	<div class="p-12 text-center border border-border rounded-2xl bg-card space-y-4 max-w-lg mx-auto my-12 shadow-xs">
 		<ShieldAlert class="h-12 w-12 text-amber-500 mx-auto" />
 		<div class="space-y-1">
 			<h2 class="text-base font-bold text-foreground">Access Restricted</h2>
@@ -731,246 +800,325 @@
 		</div>
 	</div>
 {:else}
-<div class="space-y-5 pb-12">
+<div class="space-y-6">
 	<!-- Page Header -->
 	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-		<div class="space-y-1">
-			<div class="flex items-center gap-2.5">
-				<div class="p-2 bg-emerald-500/10 text-emerald-600 rounded-xl">
-					<TrendingUp class="h-5 w-5" />
-				</div>
-				<h1 class="text-xl font-bold text-foreground tracking-tight">
-					Salesman Profit Management
-				</h1>
-			</div>
+		<div class="flex flex-col gap-1">
+			<h1 class="text-xl font-bold text-foreground flex items-center gap-2">
+				<TrendingUp class="h-5 w-5 text-primary" /> Salesman Profit Management
+			</h1>
 			<p class="text-xs text-muted-foreground">
 				Review recognized profits, modify commissions/profits with audit trail, and track modification history.
 			</p>
 		</div>
 
-		<div class="flex flex-wrap items-center gap-2">
+		<div class="flex items-center gap-2">
 			{#if activeViewTab === 'records'}
 				<Button
 					variant="outline"
-					class="h-8.5 rounded-xl cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+					class="h-8.5 rounded-xl cursor-pointer flex items-center gap-1.5"
 					onclick={exportToCSV}
 					disabled={loading || filteredRecords.length === 0}
 				>
-					<Download class="h-3.5 w-3.5" />
-					<span>Export CSV</span>
+					<FileSpreadsheet class="h-3.5 w-3.5" />
+					<span>CSV</span>
 				</Button>
 			{:else}
 				<Button
 					variant="outline"
-					class="h-8.5 rounded-xl cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+					class="h-8.5 rounded-xl cursor-pointer flex items-center gap-1.5"
 					onclick={exportHistoryToCSV}
 					disabled={loading || filteredHistory.length === 0}
 				>
-					<Download class="h-3.5 w-3.5" />
-					<span>Export History CSV</span>
+					<FileSpreadsheet class="h-3.5 w-3.5" />
+					<span>History CSV</span>
 				</Button>
 			{/if}
 			<Button
 				variant="outline"
-				class="h-8.5 rounded-xl cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+				class="h-8.5 rounded-xl cursor-pointer"
 				onclick={loadAllData}
 				disabled={loading}
 			>
-				<RefreshCw class="h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
+				<RefreshCw class={['h-3.5 w-3.5 mr-1.5', loading ? 'animate-spin' : ''].join(' ')} />
 				<span>Refresh</span>
 			</Button>
 		</div>
 	</div>
 
-
-	<!-- Main View Switcher Tabs -->
-	<div class="flex items-center justify-between border-b border-border pb-2">
-		<div class="flex items-center gap-2">
-			<button
-				type="button"
-				onclick={() => activeViewTab = 'records'}
-				class={['px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2',
-					activeViewTab === 'records'
-						? 'bg-primary text-primary-foreground shadow-xs'
-						: 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground'
-				].join(' ')}
-			>
-				<Layers class="h-4 w-4" />
-				<span>Profit Applications</span>
-				<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono {activeViewTab === 'records' ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted text-muted-foreground'}">
-					{allProfitRecords.length}
-				</span>
-			</button>
-
-			<button
-				type="button"
-				onclick={() => activeViewTab = 'history'}
-				class={['px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2',
-					activeViewTab === 'history'
-						? 'bg-primary text-primary-foreground shadow-xs'
-						: 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground'
-				].join(' ')}
-			>
-				<History class="h-4 w-4" />
-				<span>Modification History</span>
-				{#if modificationHistory.length > 0}
-					<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono {activeViewTab === 'history' ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-purple-500/20 text-purple-600 font-bold'}">
-						{modificationHistory.length}
+	<!-- Date Filter Controls -->
+	<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-3">
+		<div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+			<div class="flex items-center gap-2">
+				<Calendar class="h-4 w-4 text-primary" />
+				<span class="text-xs font-bold text-foreground">Date Range Filter</span>
+				{#if startDate || endDate}
+					<span class="px-2.5 py-0.5 rounded-md bg-primary/10 text-primary font-mono text-[11px] font-semibold">
+						{startDate || 'Start'} &rarr; {endDate || 'End'}
+					</span>
+				{:else}
+					<span class="px-2.5 py-0.5 rounded-md bg-muted text-muted-foreground font-mono text-[11px]">
+						All Time
 					</span>
 				{/if}
-			</button>
+			</div>
+
+			<!-- Preset Buttons -->
+			<div class="flex items-center gap-1.5 text-xs overflow-x-auto flex-nowrap pb-1 scrollbar-thin">
+				<button
+					type="button"
+					onclick={() => setPreset('all')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'all' && !startDate && !endDate ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					All Time
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('today')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'today' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					Today
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('this_week')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'this_week' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					This Week
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('this_month')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'this_month' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					This Month
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('last_30')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'last_30' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					Last 30 Days
+				</button>
+				<button
+					type="button"
+					onclick={() => setPreset('this_year')}
+					class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap {activePreset === 'this_year' ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+				>
+					This Year
+				</button>
+			</div>
 		</div>
 
-		{#if activeViewTab === 'history' && modificationHistory.length > 0}
-			<span class="text-[11px] text-muted-foreground font-medium hidden sm:inline">
-				Chronological log of manual profit adjustments & commission overrides
-			</span>
-		{/if}
+		<!-- Custom Date Pickers -->
+		<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2 border-t border-border/40 text-xs">
+			<div class="flex items-center gap-2">
+				<label for="startDate" class="text-muted-foreground font-medium text-[11px]">From:</label>
+				<input
+					id="startDate"
+					type="date"
+					bind:value={startDate}
+					onchange={handleCustomDateChange}
+					class="px-2.5 py-1 rounded-xl border border-border bg-background text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
+				/>
+			</div>
+
+			<div class="flex items-center gap-2">
+				<label for="endDate" class="text-muted-foreground font-medium text-[11px]">To:</label>
+				<input
+					id="endDate"
+					type="date"
+					bind:value={endDate}
+					onchange={handleCustomDateChange}
+					class="px-2.5 py-1 rounded-xl border border-border bg-background text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
+				/>
+			</div>
+
+			{#if startDate || endDate}
+				<Button
+					variant="ghost"
+					class="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1 sm:ml-auto"
+					onclick={() => setPreset('all')}
+				>
+					<X class="h-3 w-3" />
+					<span>Clear Dates</span>
+				</Button>
+			{/if}
+		</div>
 	</div>
 
-	<!-- Content Container -->
-	<div class="bg-card border border-border rounded-2xl overflow-hidden shadow-xs">
-		<!-- Universal Filter Bar -->
-		<div class="p-4 border-b border-border bg-muted/20 space-y-3">
-			<!-- Row 1: Search, Salesman, Status, Dates -->
-			<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-				<div class="flex flex-wrap items-center gap-2 flex-1">
-					<!-- Search Box -->
-					<div class="relative min-w-[200px] flex-1 max-w-sm">
-						<Search class="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-						<input
-							type="text"
-							placeholder={activeViewTab === 'records' ? 'Search by Doc #, Booking ID, Client...' : 'Search history by Doc #, Client, Reason...'}
-							bind:value={searchQuery}
-							class="h-8.5 w-full bg-background border border-border rounded-xl pl-8.5 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40 font-medium"
-						/>
-						{#if searchQuery}
-							<button
-								type="button"
-								onclick={() => searchQuery = ''}
-								class="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
-							>
-								<X class="h-3.5 w-3.5" />
-							</button>
+	{#if loading}
+		<div class="animate-pulse space-y-6">
+			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+				{#each Array(5) as _}
+					<div class="h-24 bg-muted rounded-2xl"></div>
+				{/each}
+			</div>
+			<div class="h-96 bg-muted rounded-2xl"></div>
+		</div>
+	{:else}
+		<!-- KPI Summary Cards -->
+		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Total Sales Volume</span>
+				<span class="text-lg font-bold font-mono text-foreground"><MoneyDisplay amount={totalSalesVolume} /></span>
+			</div>
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<div class="flex items-center gap-1">
+					<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Finalized Profit</span>
+					<span class="text-[10px] text-muted-foreground/70 cursor-help" title="Realized profit from confirmed/closed bookings">ⓘ</span>
+				</div>
+				<span class="text-lg font-bold font-mono text-teal-600 dark:text-teal-400"><MoneyDisplay amount={finalizedProfitAmount} /></span>
+			</div>
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Estimated Profit</span>
+				<span class="text-lg font-bold font-mono text-amber-600 dark:text-amber-400"><MoneyDisplay amount={estimatedProfitAmount} /></span>
+			</div>
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Net Total Profit</span>
+				<span class="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400"><MoneyDisplay amount={totalProfitAmount} /></span>
+			</div>
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
+				<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Overall Margin</span>
+				<span class="text-xl font-bold font-mono text-foreground">{overallMargin.toFixed(1)}%</span>
+			</div>
+		</div>
+
+		<!-- Segmented View Tabs & Filter Bar -->
+		<div class="space-y-3">
+			<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/60 pb-3">
+				<!-- Segmented View Tabs -->
+				<div class="flex items-center gap-1 bg-muted/40 rounded-xl p-1 border border-border/50">
+					<button
+						type="button"
+						onclick={() => activeViewTab = 'records'}
+						class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer {activeViewTab === 'records' ? 'bg-background text-foreground shadow-xs font-bold' : 'text-muted-foreground hover:text-foreground'}"
+					>
+						<Layers class="h-3.5 w-3.5" />
+						<span>Profit Records</span>
+						<span class="px-1.5 py-0.2 rounded-md text-[10px] font-mono {activeViewTab === 'records' ? 'bg-primary/10 text-primary font-bold' : 'bg-muted text-muted-foreground'}">
+							{filteredRecords.length}
+						</span>
+					</button>
+					<button
+						type="button"
+						onclick={() => activeViewTab = 'history'}
+						class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer {activeViewTab === 'history' ? 'bg-background text-foreground shadow-xs font-bold' : 'text-muted-foreground hover:text-foreground'}"
+					>
+						<History class="h-3.5 w-3.5" />
+						<span>Modification History</span>
+						{#if modificationHistory.length > 0}
+							<span class="px-1.5 py-0.2 rounded-md text-[10px] font-mono {activeViewTab === 'history' ? 'bg-purple-500/10 text-purple-600 font-bold' : 'bg-muted text-muted-foreground'}">
+								{filteredHistory.length}
+							</span>
 						{/if}
-					</div>
+					</button>
+				</div>
 
-					<!-- Salesman Dropdown -->
-					<div class="min-w-[170px]">
-						<SearchableSelect
-							options={salesmanOptions}
-							value={selectedSalesmanId}
-							onchange={(val) => { selectedSalesmanId = val; currentPage = 1; historyPage = 1; }}
-							placeholder="Select Salesman"
-							searchPlaceholder="Search salesmen..."
-						/>
-					</div>
+				{#if activeViewTab === 'history' && modificationHistory.length > 0}
+					<span class="text-[11px] text-muted-foreground font-medium hidden sm:inline">
+						Chronological log of manual profit adjustments & commission overrides
+					</span>
+				{/if}
+			</div>
 
-					<!-- Status Filter (for records view) -->
-					{#if activeViewTab === 'records'}
-						<div class="min-w-[130px]">
+			<!-- Universal Filter Controls Card -->
+			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-3">
+				<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+					<div class="flex flex-wrap items-center gap-2 flex-1">
+						<!-- Search Box -->
+						<div class="relative w-full max-w-[280px]">
+							<span class="absolute inset-y-0 left-3 flex items-center text-muted-foreground/60">
+								<Search class="h-4 w-4" />
+							</span>
+							<input
+								type="text"
+								placeholder={activeViewTab === 'records' ? 'Search by Doc #, Booking ID, Client...' : 'Search by Doc #, Client, Reason...'}
+								bind:value={searchQuery}
+								class="w-full pl-9 pr-8 py-1.5 text-xs rounded-xl border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder-muted-foreground/60"
+							/>
+							{#if searchQuery}
+								<button
+									type="button"
+									onclick={() => searchQuery = ''}
+									class="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+								>
+									<X class="h-3.5 w-3.5" />
+								</button>
+							{/if}
+						</div>
+
+						<!-- Salesman Dropdown -->
+						<div class="w-[180px]">
+							<SearchableSelect
+								options={salesmanOptions}
+								value={selectedSalesmanId}
+								onchange={(val) => { selectedSalesmanId = val; currentPage = 1; historyPage = 1; }}
+								placeholder="Select Salesman"
+								searchPlaceholder="Search salesmen..."
+							/>
+						</div>
+
+						<!-- Status Filter (for records view) -->
+						{#if activeViewTab === 'records'}
 							<select
 								bind:value={selectedStatus}
 								onchange={() => currentPage = 1}
-								class="h-8.5 w-full bg-background border border-border rounded-xl px-3 text-xs text-foreground font-semibold cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/40"
+								class="h-8.5 px-3 rounded-xl border border-border bg-background text-xs text-foreground font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/20"
 							>
 								<option value="all">All Statuses</option>
 								<option value="finalized">Finalized / Closed</option>
 								<option value="estimated">Estimated / Open</option>
 							</select>
-						</div>
-					{/if}
+						{/if}
 
-					<!-- Date Range -->
-					<div class="flex items-center gap-1.5">
-						<input
-							type="date"
-							bind:value={startDate}
-							onchange={() => { currentPage = 1; historyPage = 1; }}
-							class="h-8.5 bg-background border border-border rounded-xl px-2.5 text-xs text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer"
-						/>
-						<span class="text-xs text-muted-foreground font-bold">to</span>
-						<input
-							type="date"
-							bind:value={endDate}
-							onchange={() => { currentPage = 1; historyPage = 1; }}
-							class="h-8.5 bg-background border border-border rounded-xl px-2.5 text-xs text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer"
-						/>
+						{#if hasActiveFilters}
+							<Button
+								variant="ghost"
+								size="sm"
+								onclick={resetFilters}
+								class="h-8 px-2 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-500/10 cursor-pointer flex items-center gap-1"
+								title="Reset all filters"
+							>
+								<RotateCcw class="h-3 w-3" />
+								<span>Reset</span>
+							</Button>
+						{/if}
 					</div>
 				</div>
 
-				<!-- Date Presets & Reset -->
-				<div class="flex items-center gap-1.5 flex-wrap">
-					<button
-						type="button"
-						onclick={() => setQuickDatePreset('all')}
-						class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-border bg-background hover:bg-muted text-foreground transition-colors cursor-pointer"
-					>
-						All Time
-					</button>
-					<button
-						type="button"
-						onclick={() => setQuickDatePreset('month')}
-						class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-border bg-background hover:bg-muted text-foreground transition-colors cursor-pointer"
-					>
-						This Month
-					</button>
-					<button
-						type="button"
-						onclick={() => setQuickDatePreset('lastMonth')}
-						class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-border bg-background hover:bg-muted text-foreground transition-colors cursor-pointer"
-					>
-						Last Month
-					</button>
-					{#if hasActiveFilters}
+				<!-- Service Category Quick Filter Pills -->
+				<div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs flex-nowrap scrollbar-thin pt-2 border-t border-border/40">
+					<span class="text-[11px] font-bold text-muted-foreground mr-1 shrink-0">Service:</span>
+					{#each [
+						{ id: 'all', label: 'All Services', icon: Layers },
+						{ id: 'flight', label: 'Flights', icon: Plane },
+						{ id: 'hotel', label: 'Hotels', icon: Building2 },
+						{ id: 'visa', label: 'Visas', icon: FileText },
+						{ id: 'holiday', label: 'Holidays', icon: Compass },
+						{ id: 'vfs', label: 'VFS Appointments', icon: Calendar },
+						{ id: 'transport', label: 'Transportation', icon: Car },
+						{ id: 'other', label: 'Other Services', icon: Briefcase }
+					] as srv}
+						{@const isSrvActive = selectedServiceType === srv.id}
+						{@const SrvIcon = srv.icon}
 						<button
 							type="button"
-							onclick={resetFilters}
-							class="px-2.5 py-1 rounded-lg text-[11px] font-bold text-rose-600 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition-colors"
-							title="Reset all filters"
+							onclick={() => { selectedServiceType = srv.id; currentPage = 1; historyPage = 1; }}
+							class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap flex items-center gap-1.5 {isSrvActive ? 'bg-primary text-primary-foreground border-primary font-bold shadow-2xs' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
 						>
-							<RotateCcw class="h-3 w-3" />
-							<span>Reset</span>
+							<SrvIcon class="h-3 w-3" />
+							<span>{srv.label}</span>
 						</button>
-					{/if}
+					{/each}
 				</div>
-			</div>
-
-			<!-- Row 2: Service Quick Filter Pills -->
-			<div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs flex-nowrap scrollbar-thin">
-				<span class="text-[11px] font-bold text-muted-foreground mr-1 shrink-0">Service:</span>
-				{#each [
-					{ id: 'all', label: 'All Services', icon: Layers },
-					{ id: 'flight', label: 'Flights', icon: Plane },
-					{ id: 'hotel', label: 'Hotels', icon: Building2 },
-					{ id: 'visa', label: 'Visas', icon: FileText },
-					{ id: 'holiday', label: 'Holidays', icon: Compass },
-					{ id: 'vfs', label: 'VFS Appointments', icon: Calendar },
-					{ id: 'transport', label: 'Transportation', icon: Car },
-					{ id: 'other', label: 'Other Services', icon: Briefcase }
-				] as srv}
-					{@const isSrvActive = selectedServiceType === srv.id}
-					{@const SrvIcon = srv.icon}
-					<button
-						type="button"
-						onclick={() => { selectedServiceType = srv.id; currentPage = 1; historyPage = 1; }}
-						class="px-2.5 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap {isSrvActive ? 'bg-primary text-primary-foreground shadow-2xs font-bold' : 'bg-background hover:bg-muted text-muted-foreground hover:text-foreground border border-border'}"
-					>
-						<SrvIcon class="h-3 w-3" />
-						<span>{srv.label}</span>
-					</button>
-				{/each}
 			</div>
 		</div>
 
 		<!-- ================= VIEW 1: PROFIT APPLICATIONS TABLE ================= -->
 		{#if activeViewTab === 'records'}
-			{#if loading}
-				<div class="p-16 flex items-center justify-center">
-					<RefreshCw class="h-8 w-8 text-primary animate-spin" />
-				</div>
-			{:else if paginatedRecords.length === 0}
-				<div class="p-16 text-center space-y-3">
+			{#if paginatedRecords.length === 0}
+				<div class="p-12 text-center text-muted-foreground border border-border rounded-2xl bg-card space-y-3">
 					<div class="h-12 w-12 rounded-2xl bg-muted flex items-center justify-center mx-auto text-muted-foreground">
 						<TrendingUp class="h-6 w-6" />
 					</div>
@@ -986,180 +1134,207 @@
 					{/if}
 				</div>
 			{:else}
-				<div class="overflow-x-auto">
-					<table class="w-full text-left text-xs border-collapse">
-						<thead>
-							<tr class="border-b border-border bg-muted/40 text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-								<th class="py-3 px-4">Booking Ref</th>
-								<th class="py-3 px-4">Salesman</th>
-								<th class="py-3 px-4 text-right">Selling Price</th>
-								<th class="py-3 px-4 text-right">Supplier Cost</th>
-								<th class="py-3 px-4 text-right">Net Profit</th>
-								<th class="py-3 px-4 text-center">Modifications</th>
-								<th class="py-3 px-4 text-right">Action</th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-border/60">
-							{#each paginatedRecords as r}
-								{@const ServiceIcon = getServiceIcon(r.bookingType)}
-								{@const modCount = getRecordModificationsCount(r)}
-								<tr class="hover:bg-muted/30 transition-colors">
-									<!-- Booking Ref -->
-									<td class="py-3 px-4">
-										<div class="flex items-center gap-2">
-											<div class="p-1.5 rounded-lg border {getServiceBadgeColor(r.bookingType)}">
-												<ServiceIcon class="h-3.5 w-3.5" />
-											</div>
-											<div>
-												<a
-													href="/sales/bookings/{getServiceRouteSlug(r.bookingType)}/{r.bookingId}"
-													class="font-bold text-foreground font-mono hover:text-primary hover:underline flex items-center gap-1"
-												>
-													<span>{r.documentNumber || `#${r.bookingId}`}</span>
-													<ExternalLink class="h-2.5 w-2.5 opacity-60" />
-												</a>
-												{#if r.clientName}
-													<span class="text-[11px] font-semibold text-foreground/80 block truncate max-w-[160px]" title={r.clientName}>
-														{r.clientName}
+				<div class="bg-card border border-border rounded-2xl overflow-hidden shadow-xs">
+					<div class="overflow-x-auto">
+						<table class="w-full text-left text-xs border-collapse">
+							<thead>
+								<tr class="bg-muted/30 border-b border-border text-muted-foreground font-semibold text-[11px] uppercase tracking-wider select-none">
+									<th class="py-3 px-4 cursor-pointer hover:bg-muted/20 transition-colors" onclick={() => handleSort('doc')}>
+										<div class="flex items-center gap-1">
+											<span>Booking Ref</span>
+											<ArrowUpDown class="h-3 w-3" />
+										</div>
+									</th>
+									<th class="py-3 px-4 cursor-pointer hover:bg-muted/20 transition-colors" onclick={() => handleSort('salesman')}>
+										<div class="flex items-center gap-1">
+											<span>Salesman</span>
+											<ArrowUpDown class="h-3 w-3" />
+										</div>
+									</th>
+									<th class="py-3 px-4 text-right cursor-pointer hover:bg-muted/20 transition-colors" onclick={() => handleSort('sale')}>
+										<div class="flex items-center justify-end gap-1">
+											<span>Selling Price</span>
+											<ArrowUpDown class="h-3 w-3" />
+										</div>
+									</th>
+									<th class="py-3 px-4 text-right cursor-pointer hover:bg-muted/20 transition-colors" onclick={() => handleSort('cost')}>
+										<div class="flex items-center justify-end gap-1">
+											<span>Supplier Cost</span>
+											<ArrowUpDown class="h-3 w-3" />
+										</div>
+									</th>
+									<th class="py-3 px-4 text-right cursor-pointer hover:bg-muted/20 transition-colors" onclick={() => handleSort('profit')}>
+										<div class="flex items-center justify-end gap-1">
+											<span>Net Profit</span>
+											<ArrowUpDown class="h-3 w-3" />
+										</div>
+									</th>
+									<th class="py-3 px-4 text-center">Modifications</th>
+									<th class="py-3 px-4 text-right">Action</th>
+								</tr>
+							</thead>
+							<tbody class="divide-y divide-border/60">
+								{#each paginatedRecords as r}
+									{@const ServiceIcon = getServiceIcon(r.bookingType)}
+									{@const modCount = getRecordModificationsCount(r)}
+									<tr class="hover:bg-muted/10 transition-colors">
+										<!-- Booking Ref -->
+										<td class="py-3 px-4">
+											<div class="flex items-center gap-2">
+												<div class="p-1.5 rounded-lg border {getServiceBadgeColor(r.bookingType)}">
+													<ServiceIcon class="h-3.5 w-3.5" />
+												</div>
+												<div>
+													<a
+														href="/sales/bookings/{getServiceRouteSlug(r.bookingType)}/{r.bookingId}"
+														class="font-bold text-foreground font-mono hover:text-primary hover:underline flex items-center gap-1"
+													>
+														<span>{r.documentNumber || `#${r.bookingId}`}</span>
+														<ExternalLink class="h-2.5 w-2.5 opacity-60" />
+													</a>
+													{#if r.clientName}
+														<span class="text-[11px] font-semibold text-foreground/80 block truncate max-w-[160px]" title={r.clientName}>
+															{r.clientName}
+														</span>
+													{/if}
+													<span class="text-[10px] text-muted-foreground">
+														<DateDisplay date={r.bookingCreatedAt} />
 													</span>
-												{/if}
-												<span class="text-[10px] text-muted-foreground">
-													<DateDisplay date={r.bookingCreatedAt} />
-												</span>
+												</div>
 											</div>
-										</div>
-									</td>
+										</td>
 
-									<!-- Salesman -->
-									<td class="py-3 px-4 font-semibold text-foreground">
-										<div class="flex items-center gap-2">
-											<div class="h-6 w-6 rounded-full bg-primary/10 text-primary font-bold text-[10px] flex items-center justify-center shrink-0">
-												{(r.salesmanName || 'S').charAt(0).toUpperCase()}
+										<!-- Salesman -->
+										<td class="py-3 px-4 font-semibold text-foreground">
+											<div class="flex items-center gap-2">
+												<div class="h-6 w-6 rounded-full bg-primary/10 text-primary font-bold text-[10px] flex items-center justify-center shrink-0">
+													{(r.salesmanName || 'S').charAt(0).toUpperCase()}
+												</div>
+												<span class="truncate max-w-[150px]">{r.salesmanName || `Salesman #${r.salesmanId}`}</span>
 											</div>
-											<span class="truncate max-w-[150px]">{r.salesmanName || `Salesman #${r.salesmanId}`}</span>
-										</div>
-									</td>
+										</td>
 
-									<!-- Selling Price -->
-									<td class="py-3 px-4 text-right font-mono font-bold text-foreground">
-										<MoneyDisplay amount={r.payableAmount} />
-									</td>
+										<!-- Selling Price -->
+										<td class="py-3 px-4 text-right font-mono font-bold text-foreground">
+											<MoneyDisplay amount={r.payableAmount} />
+										</td>
 
-									<!-- Supplier Cost -->
-									<td class="py-3 px-4 text-right">
-										<span class="font-mono text-muted-foreground block">
-											<MoneyDisplay amount={r.finalSupplierCost} />
-										</span>
-										<span class="text-[9px] uppercase tracking-wider font-bold text-muted-foreground/80">
-											{r.supplierCostSource}
-										</span>
-									</td>
-
-									<!-- Net Profit -->
-									<td class="py-3 px-4 text-right">
-										<span class="font-mono font-bold text-sm {r.profitAmount >= 0 ? 'text-emerald-600' : 'text-rose-600'}">
-											<MoneyDisplay amount={r.profitAmount} />
-										</span>
-									</td>
-
-									<!-- Modifications Status / Badge -->
-									<td class="py-3 px-4 text-center">
-										{#if modCount > 0}
-											<button
-												type="button"
-												onclick={() => openHistoryModal(r)}
-												class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 border border-purple-500/20 cursor-pointer transition-colors"
-												title="Click to view modification history for this booking"
-											>
-												<History class="h-3 w-3" />
-												<span>Modified ({modCount})</span>
-											</button>
-										{:else}
-											<span class="text-[10px] text-muted-foreground/60 font-medium">
-												Standard
+										<!-- Supplier Cost -->
+										<td class="py-3 px-4 text-right">
+											<span class="font-mono text-muted-foreground block">
+												<MoneyDisplay amount={r.finalSupplierCost} />
 											</span>
-										{/if}
-									</td>
+											<span class="text-[9px] uppercase tracking-wider font-bold text-muted-foreground/80">
+												{r.supplierCostSource}
+											</span>
+										</td>
 
-									<!-- Action -->
-									<td class="py-3 px-4 text-right">
-										<div class="flex items-center justify-end gap-1.5">
+										<!-- Net Profit -->
+										<td class="py-3 px-4 text-right">
+											<span class="font-mono font-bold text-sm {r.profitAmount >= 0 ? 'text-teal-600 dark:text-teal-400' : 'text-rose-600'}">
+												<MoneyDisplay amount={r.profitAmount} />
+											</span>
+										</td>
+
+										<!-- Modifications Status / Badge -->
+										<td class="py-3 px-4 text-center">
 											{#if modCount > 0}
-												<Button
-													variant="ghost"
-													size="sm"
-													class="h-7 px-2 rounded-lg text-xs font-semibold cursor-pointer text-purple-600 hover:bg-purple-500/10"
+												<button
+													type="button"
 													onclick={() => openHistoryModal(r)}
-													title="View modification history"
+													class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 border border-purple-500/20 cursor-pointer transition-colors"
+													title="Click to view modification history for this booking"
 												>
 													<History class="h-3 w-3" />
-												</Button>
+													<span>Modified ({modCount})</span>
+												</button>
+											{:else}
+												<span class="text-[10px] text-muted-foreground/60 font-medium">
+													Standard
+												</span>
 											{/if}
-											<Button
-												variant="outline"
-												size="sm"
-												class="h-7 px-2.5 rounded-lg text-xs font-semibold cursor-pointer hover:bg-primary hover:text-primary-foreground transition-all"
-												onclick={() => openAdjustModal(r)}
-											>
-												<Edit3 class="h-3 w-3 mr-1" />
-												<span>Adjust</span>
-											</Button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+										</td>
 
-				<!-- Pagination Bar for Records -->
-				<div class="p-3.5 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground bg-muted/10">
-					<div class="flex items-center gap-2">
-						<span>Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filteredRecords.length)} of {filteredRecords.length} records</span>
-						<select
-							bind:value={pageSize}
-							onchange={() => currentPage = 1}
-							class="h-7 px-2 bg-background border border-border rounded-lg text-xs text-foreground cursor-pointer font-semibold"
-						>
-							<option value={10}>10 / page</option>
-							<option value={20}>20 / page</option>
-							<option value={50}>50 / page</option>
-							<option value={100}>100 / page</option>
-							<option value={200}>200 / page</option>
-							<option value={500}>500 / page</option>
-							<option value={1000}>1000 / page (All)</option>
-						</select>
+										<!-- Action -->
+										<td class="py-3 px-4 text-right">
+											<div class="flex items-center justify-end gap-1.5">
+												{#if modCount > 0}
+													<Button
+														variant="ghost"
+														size="sm"
+														class="h-7 px-2 rounded-lg text-xs font-semibold cursor-pointer text-purple-600 hover:bg-purple-500/10"
+														onclick={() => openHistoryModal(r)}
+														title="View modification history"
+													>
+														<History class="h-3 w-3" />
+													</Button>
+												{/if}
+												<Button
+													variant="outline"
+													size="sm"
+													class="h-7 px-2.5 rounded-lg text-xs font-semibold cursor-pointer hover:bg-primary hover:text-primary-foreground transition-all"
+													onclick={() => openAdjustModal(r)}
+												>
+													<Edit3 class="h-3 w-3 mr-1" />
+													<span>Adjust</span>
+												</Button>
+											</div>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
 					</div>
 
-					<div class="flex items-center gap-1.5">
-						<button
-							type="button"
-							disabled={currentPage <= 1}
-							onclick={() => currentPage--}
-							class="h-7.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-1 transition-colors"
-						>
-							<ChevronLeft class="h-3.5 w-3.5" />
-							<span>Prev</span>
-						</button>
-						<span class="px-2 font-semibold text-foreground">
-							Page {currentPage} of {totalPages}
-						</span>
-						<button
-							type="button"
-							disabled={currentPage >= totalPages}
-							onclick={() => currentPage++}
-							class="h-7.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-1 transition-colors"
-						>
-							<span>Next</span>
-							<ChevronRight class="h-3.5 w-3.5" />
-						</button>
+					<!-- Pagination Bar for Records -->
+					<div class="p-3.5 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground bg-muted/10">
+						<div class="flex items-center gap-2">
+							<span>Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filteredRecords.length)} of {filteredRecords.length} records</span>
+							<select
+								bind:value={pageSize}
+								onchange={() => currentPage = 1}
+								class="h-7 px-2 bg-background border border-border rounded-lg text-xs text-foreground cursor-pointer font-semibold"
+							>
+								<option value={10}>10 / page</option>
+								<option value={20}>20 / page</option>
+								<option value={50}>50 / page</option>
+								<option value={100}>100 / page</option>
+								<option value={200}>200 / page</option>
+								<option value={500}>500 / page</option>
+								<option value={1000}>1000 / page (All)</option>
+							</select>
+						</div>
+
+						<div class="flex items-center gap-1.5">
+							<button
+								type="button"
+								disabled={currentPage <= 1}
+								onclick={() => currentPage--}
+								class="h-7.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-1 transition-colors"
+							>
+								<ChevronLeft class="h-3.5 w-3.5" />
+								<span>Prev</span>
+							</button>
+							<span class="px-2 font-semibold text-foreground">
+								Page {currentPage} of {totalPages}
+							</span>
+							<button
+								type="button"
+								disabled={currentPage >= totalPages}
+								onclick={() => currentPage++}
+								class="h-7.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-1 transition-colors"
+							>
+								<span>Next</span>
+								<ChevronRight class="h-3.5 w-3.5" />
+							</button>
+						</div>
 					</div>
 				</div>
 			{/if}
 		{:else}
 			<!-- ================= VIEW 2: MODIFICATION HISTORY AUDIT TRAIL ================= -->
 			{#if filteredHistory.length === 0}
-				<div class="p-16 text-center space-y-3">
+				<div class="p-12 text-center text-muted-foreground border border-border rounded-2xl bg-card space-y-3">
 					<div class="h-12 w-12 rounded-2xl bg-purple-500/10 flex items-center justify-center mx-auto text-purple-600">
 						<History class="h-6 w-6" />
 					</div>
@@ -1175,176 +1350,177 @@
 					{/if}
 				</div>
 			{:else}
-				<div class="overflow-x-auto">
-					<table class="w-full text-left text-xs border-collapse">
-						<thead>
-							<tr class="border-b border-border bg-purple-500/5 text-[11px] font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wider">
-								<th class="py-3 px-4">Timestamp & Date</th>
-								<th class="py-3 px-4">Booking Ref</th>
-								<th class="py-3 px-4">Salesman</th>
-								<th class="py-3 px-4 text-right">Profit Shift</th>
-								<th class="py-3 px-4 text-center">Adjustment Delta</th>
-								<th class="py-3 px-4">Reason / Explanation</th>
-								<th class="py-3 px-4 text-right">Action</th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-border/60">
-							{#each paginatedHistory as h}
-								{@const ServiceIcon = getServiceIcon(h.bookingType)}
-								<tr class="hover:bg-muted/30 transition-colors">
-									<!-- Timestamp -->
-									<td class="py-3 px-4">
-										<div class="flex items-center gap-1.5 font-mono text-[11px] text-foreground">
-											<Clock class="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-											<div>
-												<span class="block font-bold">
-													{formatDate(h.timestamp)}
-												</span>
-												<span class="text-[10px] text-muted-foreground">
-													{formatBahrainTime(h.timestamp)}
-												</span>
-											</div>
-										</div>
-									</td>
-
-									<!-- Booking Ref -->
-									<td class="py-3 px-4">
-										<div class="flex items-center gap-2">
-											<div class="p-1.5 rounded-lg border {getServiceBadgeColor(h.bookingType)}">
-												<ServiceIcon class="h-3.5 w-3.5" />
-											</div>
-											<div>
-												<a
-													href="/sales/bookings/{getServiceRouteSlug(h.bookingType)}/{h.bookingId}"
-													class="font-bold text-foreground font-mono hover:text-primary hover:underline flex items-center gap-1"
-												>
-													<span>{h.documentNumber || `#${h.bookingId}`}</span>
-													<ExternalLink class="h-2.5 w-2.5 opacity-60" />
-												</a>
-												{#if h.clientName}
-													<span class="text-[11px] font-semibold text-foreground/80 block truncate max-w-[150px]" title={h.clientName}>
-														{h.clientName}
-													</span>
-												{/if}
-												<span class="text-[10px] text-muted-foreground uppercase font-bold">
-													{h.bookingType}
-												</span>
-											</div>
-										</div>
-									</td>
-
-									<!-- Salesman -->
-									<td class="py-3 px-4 font-semibold text-foreground">
-										<div class="flex items-center gap-2">
-											<div class="h-6 w-6 rounded-full bg-primary/10 text-primary font-bold text-[10px] flex items-center justify-center shrink-0">
-												{(h.salesmanName || 'S').charAt(0).toUpperCase()}
-											</div>
-											<span class="truncate max-w-[140px]">{h.salesmanName || `Salesman #${h.salesmanId}`}</span>
-										</div>
-									</td>
-
-									<!-- Profit Shift (Before -> After) -->
-									<td class="py-3 px-4 text-right font-mono">
-										<div class="flex items-center justify-end gap-1 text-[11px]">
-											<span class="text-muted-foreground line-through opacity-80">
-												{h.previousProfit.toFixed(3)}
-											</span>
-											<ArrowRight class="h-3 w-3 text-muted-foreground" />
-											<span class="font-bold text-foreground">
-												{h.newProfit.toFixed(3)} BHD
-											</span>
-										</div>
-									</td>
-
-									<!-- Adjustment Delta -->
-									<td class="py-3 px-4 text-center">
-										<span class={['inline-block px-2.5 py-0.5 rounded-full font-mono text-xs font-bold',
-											h.deltaAmount >= 0
-												? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
-												: 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
-										].join(' ')}>
-											{h.deltaAmount >= 0 ? '+' : ''}{h.deltaAmount.toFixed(3)} BHD
-										</span>
-									</td>
-
-									<!-- Reason / Explanation -->
-									<td class="py-3 px-4 max-w-xs">
-										<div class="text-xs text-foreground font-medium line-clamp-2">
-											{h.reason}
-										</div>
-										<span class="text-[10px] text-muted-foreground block font-mono mt-0.5">
-											By {h.modifiedBy || 'Accountant'}
-										</span>
-									</td>
-
-									<!-- Action -->
-									<td class="py-3 px-4 text-right">
-										<a
-											href="/sales/bookings/{getServiceRouteSlug(h.bookingType)}/{h.bookingId}"
-											class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-muted text-foreground transition-colors cursor-pointer"
-										>
-											<span>View Deal</span>
-											<ExternalLink class="h-3 w-3" />
-										</a>
-									</td>
+				<div class="bg-card border border-border rounded-2xl overflow-hidden shadow-xs">
+					<div class="overflow-x-auto">
+						<table class="w-full text-left text-xs border-collapse">
+							<thead>
+								<tr class="border-b border-border bg-purple-500/5 text-[11px] font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wider">
+									<th class="py-3 px-4">Timestamp & Date</th>
+									<th class="py-3 px-4">Booking Ref</th>
+									<th class="py-3 px-4">Salesman</th>
+									<th class="py-3 px-4 text-right">Profit Shift</th>
+									<th class="py-3 px-4 text-center">Adjustment Delta</th>
+									<th class="py-3 px-4">Reason / Explanation</th>
+									<th class="py-3 px-4 text-right">Action</th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+							</thead>
+							<tbody class="divide-y divide-border/60">
+								{#each paginatedHistory as h}
+									{@const ServiceIcon = getServiceIcon(h.bookingType)}
+									<tr class="hover:bg-muted/10 transition-colors">
+										<!-- Timestamp -->
+										<td class="py-3 px-4">
+											<div class="flex items-center gap-1.5 font-mono text-[11px] text-foreground">
+												<Clock class="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+												<div>
+													<span class="block font-bold">
+														{formatDate(h.timestamp)}
+													</span>
+													<span class="text-[10px] text-muted-foreground">
+														{formatBahrainTime(h.timestamp)}
+													</span>
+												</div>
+											</div>
+										</td>
 
-				<!-- Pagination Bar for History -->
-				<div class="p-3.5 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground bg-muted/10">
-					<div class="flex items-center gap-2">
-						<span>Showing {(historyPage - 1) * historyPageSize + 1} to {Math.min(historyPage * historyPageSize, filteredHistory.length)} of {filteredHistory.length} modifications</span>
-						<select
-							bind:value={historyPageSize}
-							onchange={() => historyPage = 1}
-							class="h-7 px-2 bg-background border border-border rounded-lg text-xs text-foreground cursor-pointer font-semibold"
-						>
-							<option value={10}>10 / page</option>
-							<option value={20}>20 / page</option>
-							<option value={50}>50 / page</option>
-							<option value={100}>100 / page</option>
-							<option value={200}>200 / page</option>
-							<option value={500}>500 / page</option>
-							<option value={1000}>1000 / page (All)</option>
-						</select>
+										<!-- Booking Ref -->
+										<td class="py-3 px-4">
+											<div class="flex items-center gap-2">
+												<div class="p-1.5 rounded-lg border {getServiceBadgeColor(h.bookingType)}">
+													<ServiceIcon class="h-3.5 w-3.5" />
+												</div>
+												<div>
+													<a
+														href="/sales/bookings/{getServiceRouteSlug(h.bookingType)}/{h.bookingId}"
+														class="font-bold text-foreground font-mono hover:text-primary hover:underline flex items-center gap-1"
+													>
+														<span>{h.documentNumber || `#${h.bookingId}`}</span>
+														<ExternalLink class="h-2.5 w-2.5 opacity-60" />
+													</a>
+													{#if h.clientName}
+														<span class="text-[11px] font-semibold text-foreground/80 block truncate max-w-[150px]" title={h.clientName}>
+															{h.clientName}
+														</span>
+													{/if}
+													<span class="text-[10px] text-muted-foreground uppercase font-bold">
+														{h.bookingType}
+													</span>
+												</div>
+											</div>
+										</td>
+
+										<!-- Salesman -->
+										<td class="py-3 px-4 font-semibold text-foreground">
+											<div class="flex items-center gap-2">
+												<div class="h-6 w-6 rounded-full bg-primary/10 text-primary font-bold text-[10px] flex items-center justify-center shrink-0">
+													{(h.salesmanName || 'S').charAt(0).toUpperCase()}
+												</div>
+												<span class="truncate max-w-[140px]">{h.salesmanName || `Salesman #${h.salesmanId}`}</span>
+											</div>
+										</td>
+
+										<!-- Profit Shift (Before -> After) -->
+										<td class="py-3 px-4 text-right font-mono">
+											<div class="flex items-center justify-end gap-1 text-[11px]">
+												<span class="text-muted-foreground line-through opacity-80">
+													{h.previousProfit.toFixed(3)}
+												</span>
+												<ArrowRight class="h-3 w-3 text-muted-foreground" />
+												<span class="font-bold text-foreground">
+													{h.newProfit.toFixed(3)} BHD
+												</span>
+											</div>
+										</td>
+
+										<!-- Adjustment Delta -->
+										<td class="py-3 px-4 text-center">
+											<span class={['inline-block px-2.5 py-0.5 rounded-full font-mono text-xs font-bold',
+												h.deltaAmount >= 0
+													? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+													: 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
+											].join(' ')}>
+												{h.deltaAmount >= 0 ? '+' : ''}{h.deltaAmount.toFixed(3)} BHD
+											</span>
+										</td>
+
+										<!-- Reason / Explanation -->
+										<td class="py-3 px-4 max-w-xs">
+											<div class="text-xs text-foreground font-medium line-clamp-2">
+												{h.reason}
+											</div>
+											<span class="text-[10px] text-muted-foreground block font-mono mt-0.5">
+												By {h.modifiedBy || 'Accountant'}
+											</span>
+										</td>
+
+										<!-- Action -->
+										<td class="py-3 px-4 text-right">
+											<a
+												href="/sales/bookings/{getServiceRouteSlug(h.bookingType)}/{h.bookingId}"
+												class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-muted text-foreground transition-colors cursor-pointer"
+											>
+												<span>View Deal</span>
+												<ExternalLink class="h-3 w-3" />
+											</a>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
 					</div>
 
-					<div class="flex items-center gap-1.5">
-						<button
-							type="button"
-							disabled={historyPage <= 1}
-							onclick={() => historyPage--}
-							class="h-7.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-1 transition-colors"
-						>
-							<ChevronLeft class="h-3.5 w-3.5" />
-							<span>Prev</span>
-						</button>
-						<span class="px-2 font-semibold text-foreground">
-							Page {historyPage} of {totalHistoryPages}
-						</span>
-						<button
-							type="button"
-							disabled={historyPage >= totalHistoryPages}
-							onclick={() => historyPage++}
-							class="h-7.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-1 transition-colors"
-						>
-							<span>Next</span>
-							<ChevronRight class="h-3.5 w-3.5" />
-						</button>
+					<!-- Pagination Bar for History -->
+					<div class="p-3.5 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground bg-muted/10">
+						<div class="flex items-center gap-2">
+							<span>Showing {(historyPage - 1) * historyPageSize + 1} to {Math.min(historyPage * historyPageSize, filteredHistory.length)} of {filteredHistory.length} modifications</span>
+							<select
+								bind:value={historyPageSize}
+								onchange={() => historyPage = 1}
+								class="h-7 px-2 bg-background border border-border rounded-lg text-xs text-foreground cursor-pointer font-semibold"
+							>
+								<option value={10}>10 / page</option>
+								<option value={20}>20 / page</option>
+								<option value={50}>50 / page</option>
+								<option value={100}>100 / page</option>
+								<option value={200}>200 / page</option>
+								<option value={500}>500 / page</option>
+								<option value={1000}>1000 / page (All)</option>
+							</select>
+						</div>
+
+						<div class="flex items-center gap-1.5">
+							<button
+								type="button"
+								disabled={historyPage <= 1}
+								onclick={() => historyPage--}
+								class="h-7.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-1 transition-colors"
+							>
+								<ChevronLeft class="h-3.5 w-3.5" />
+								<span>Prev</span>
+							</button>
+							<span class="px-2 font-semibold text-foreground">
+								Page {historyPage} of {totalHistoryPages}
+							</span>
+							<button
+								type="button"
+								disabled={historyPage >= totalHistoryPages}
+								onclick={() => historyPage++}
+								class="h-7.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-1 transition-colors"
+							>
+								<span>Next</span>
+								<ChevronRight class="h-3.5 w-3.5" />
+							</button>
+						</div>
 					</div>
 				</div>
 			{/if}
 		{/if}
-	</div>
+	{/if}
 </div>
 
 <!-- ================= Modal 1: User-Friendly Profit Adjustment Modal ================= -->
 {#if showAdjustModal && adjustingRecord}
 	{@const recordPriorHistory = getRecordModifications(adjustingRecord)}
-	<!-- Backdrop with Esc handling -->
 	<div
 		class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
 		onclick={(e) => e.target === e.currentTarget && (showAdjustModal = false)}
@@ -1393,7 +1569,7 @@
 					</div>
 					<div>
 						<span class="text-[10px] font-semibold text-muted-foreground block">Current Profit</span>
-						<span class="font-bold font-mono text-emerald-600">
+						<span class="font-bold font-mono text-teal-600 dark:text-teal-400">
 							{adjustingRecord.profitAmount.toFixed(3)} BHD
 						</span>
 					</div>
@@ -1412,7 +1588,7 @@
 							].join(' ')}
 							onclick={() => switchAdjustMode('direct')}
 						>
-							<DollarSign class="h-3.5 w-3.5 text-emerald-600" />
+							<DollarSign class="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
 							<span>Edit Profit Amount</span>
 						</button>
 						<button
@@ -1455,8 +1631,8 @@
 								</button>
 							</div>
 						</div>
-						<div class="flex items-center rounded-xl border border-border bg-background focus-within:ring-2 focus-within:ring-emerald-500/30 overflow-hidden h-9">
-							<span class="px-3 bg-muted/50 border-r border-border text-xs font-bold text-emerald-700 dark:text-emerald-400 font-mono">
+						<div class="flex items-center rounded-xl border border-border bg-background focus-within:ring-2 focus-within:ring-primary/20 overflow-hidden h-9">
+							<span class="px-3 bg-muted/50 border-r border-border text-xs font-bold text-teal-700 dark:text-teal-400 font-mono">
 								BHD
 							</span>
 							<input
@@ -1514,7 +1690,7 @@
 				<div class="p-3 bg-primary/5 border border-primary/20 rounded-xl flex items-center justify-between text-xs">
 					<div>
 						<span class="text-[10px] font-bold text-muted-foreground block">Projected New Profit</span>
-						<span class="text-sm font-bold font-mono text-emerald-600">
+						<span class="text-sm font-bold font-mono text-teal-600 dark:text-teal-400">
 							{projectedNewProfit.toFixed(3)} BHD
 						</span>
 					</div>
@@ -1541,7 +1717,7 @@
 								<div class="p-2 rounded-lg bg-muted/40 border border-border/80 text-[11px] space-y-0.5">
 									<div class="flex items-center justify-between font-mono">
 										<span class="text-muted-foreground">{new Date(ph.timestamp).toLocaleString()}</span>
-										<span class="font-bold {ph.deltaAmount >= 0 ? 'text-emerald-600' : 'text-rose-600'}">
+										<span class="font-bold {ph.deltaAmount >= 0 ? 'text-teal-600 dark:text-teal-400' : 'text-rose-600'}">
 											{ph.deltaAmount >= 0 ? '+' : ''}{ph.deltaAmount.toFixed(3)} BHD
 										</span>
 									</div>
@@ -1556,18 +1732,17 @@
 
 				<!-- Actions -->
 				<div class="flex items-center justify-end gap-2 pt-3 border-t border-border">
-					<button
-						type="button"
+					<Button
+						variant="outline"
+						class="h-8.5 rounded-xl cursor-pointer"
 						onclick={() => showAdjustModal = false}
 						disabled={isSubmittingAdjustment}
-						class="h-8.5 px-3 rounded-xl border border-border bg-background text-foreground hover:bg-muted text-xs font-medium cursor-pointer transition-colors"
 					>
 						Cancel
-					</button>
-					<button
-						type="submit"
+					</Button>
+					<Button
+						class="h-8.5 rounded-xl cursor-pointer flex items-center gap-1.5 font-semibold"
 						disabled={isSubmittingAdjustment || !adjustReason.trim() || Math.abs(calculatedDelta) < 0.0001}
-						class="h-8.5 px-4 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-60"
 					>
 						{#if isSubmittingAdjustment}
 							<RefreshCw class="h-3.5 w-3.5 animate-spin" />
@@ -1576,7 +1751,7 @@
 							<Save class="h-3.5 w-3.5" />
 							<span>Save & Apply Adjustment</span>
 						{/if}
-					</button>
+					</Button>
 				</div>
 			</form>
 		</div>
@@ -1622,7 +1797,7 @@
 				<div class="p-3.5 bg-muted/30 border border-border rounded-xl flex items-center justify-between text-xs">
 					<div>
 						<span class="text-[10px] font-semibold text-muted-foreground block">Current Net Profit</span>
-						<span class="font-bold font-mono text-base text-emerald-600">
+						<span class="font-bold font-mono text-base text-teal-600 dark:text-teal-400">
 							{historyModalRecord.profitAmount.toFixed(3)} BHD
 						</span>
 					</div>
@@ -1642,7 +1817,7 @@
 					</div>
 				{:else}
 					<div class="space-y-2.5">
-						{#each recordHistory as item, idx}
+						{#each recordHistory as item}
 							<div class="p-3 bg-background border border-border rounded-xl space-y-2 relative">
 								<div class="flex items-center justify-between text-[11px]">
 									<div class="flex items-center gap-1.5 text-muted-foreground font-mono">
@@ -1663,7 +1838,7 @@
 										Before: <strong class="text-foreground">{item.previousProfit.toFixed(3)} BHD</strong>
 									</span>
 									<ArrowRight class="h-3 w-3 text-muted-foreground" />
-									<span class="text-emerald-600 font-bold">
+									<span class="text-teal-600 dark:text-teal-400 font-bold">
 										After: {item.newProfit.toFixed(3)} BHD
 									</span>
 								</div>
@@ -1693,7 +1868,7 @@
 					variant="outline"
 					size="sm"
 					onclick={() => showHistoryModal = false}
-					class="rounded-xl text-xs"
+					class="rounded-xl text-xs cursor-pointer"
 				>
 					Close
 				</Button>
