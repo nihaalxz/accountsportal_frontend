@@ -315,7 +315,7 @@
 				salesmanName: selectedSalesman ? selectedSalesman.name : null,
 				clientName: selectedClient ? selectedClient.name : null,
 				agentName: clientType === 'agent' && selectedClient ? selectedClient.name : null,
-				description: description.trim() || `Payment Receipt from ${selectedClient?.name || 'Client'} (${clientType}) via ${selectedSalesman?.name || 'Salesman'}`,
+				description: description.trim() || null,
 				referenceId: referenceId.trim(),
 				paymentProof,
 				receiptDate: new Date().toISOString()

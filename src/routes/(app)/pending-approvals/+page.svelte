@@ -1959,7 +1959,7 @@
 									</div>
 									<div class="space-y-0.5">
 										<span class="text-muted-foreground block text-[10px] uppercase tracking-wider font-bold">Description</span>
-										<span class="font-medium text-foreground truncate block">{payload.description || payload.Description || '—'}</span>
+										<span class="font-medium text-foreground break-words whitespace-normal block" title={payload.description || payload.Description || '—'}>{payload.description || payload.Description || '—'}</span>
 									</div>
 									<div class="space-y-0.5">
 										<span class="text-muted-foreground block text-[10px] uppercase tracking-wider font-bold">Status</span>
@@ -2143,7 +2143,7 @@
 							</div>
 							<div class="space-y-0.5">
 								<span class="text-muted-foreground block text-[10px] uppercase tracking-wider font-bold">Description / Narration</span>
-								<span class="text-foreground truncate block font-medium">{expense.description || expense.notes || '—'}</span>
+								<span class="text-foreground break-words whitespace-normal block font-medium" title={expense.description || expense.notes || '—'}>{expense.description || expense.notes || '—'}</span>
 							</div>
 						</div>
 
@@ -2258,7 +2258,7 @@
 							{/if}
 							<div class="space-y-0.5">
 								<span class="text-muted-foreground block text-[10px] uppercase tracking-wider font-bold">Description</span>
-								<span class="text-foreground truncate block font-medium">{txn.description || 'Direct treasury movement'}</span>
+								<span class="text-foreground break-words whitespace-normal block font-medium" title={txn.description || 'Direct treasury movement'}>{txn.description || 'Direct treasury movement'}</span>
 							</div>
 						</div>
 
@@ -2364,7 +2364,7 @@
 								<span class="font-bold text-indigo-600 dark:text-indigo-400 text-base">
 									<MoneyDisplay amount={journal.amount} />
 								</span>
-								<span class="text-[10px] text-muted-foreground truncate max-w-[200px] mt-0.5">
+								<span class="text-[10px] text-muted-foreground break-words whitespace-normal text-center max-w-[240px] mt-0.5" title={journal.note || journal.transferReference || 'Wallet balance transfer'}>
 									{journal.note || journal.transferReference || 'Wallet balance transfer'}
 								</span>
 							</div>
@@ -2500,7 +2500,7 @@
 							</div>
 							<div class="space-y-0.5">
 								<span class="text-muted-foreground block text-[10px] uppercase tracking-wider font-bold">Reference / Note</span>
-								<span class="text-foreground truncate block font-medium">
+								<span class="text-foreground break-words whitespace-normal block font-medium" title={item.description || (isCredit ? 'Credit debt settlement' : 'Prepaid wallet deposit')}>
 									{item.referenceNumber ? `#${item.referenceNumber} • ` : ''}{item.description || (isCredit ? 'Credit debt settlement' : 'Prepaid wallet deposit')}
 								</span>
 							</div>
@@ -2609,7 +2609,7 @@
 							</div>
 							<div class="space-y-0.5">
 								<span class="text-muted-foreground block text-[10px] uppercase tracking-wider font-bold">Reason / Reference</span>
-								<span class="text-foreground truncate block font-medium">{pr.reason || pr.originalPurchaseReference || 'Supplier return refund'}</span>
+								<span class="text-foreground break-words whitespace-normal block font-medium" title={pr.reason || pr.originalPurchaseReference || 'Supplier return refund'}>{pr.reason || pr.originalPurchaseReference || 'Supplier return refund'}</span>
 							</div>
 						</div>
 
@@ -2715,7 +2715,7 @@
 							</div>
 							<div class="space-y-0.5">
 								<span class="text-muted-foreground block text-[10px] uppercase tracking-wider font-bold">Reason / Reference</span>
-								<span class="text-foreground truncate block font-medium">{sr.reason || sr.originalSaleReference || 'Sales return refund'}</span>
+								<span class="text-foreground break-words whitespace-normal block font-medium" title={sr.reason || sr.originalSaleReference || 'Sales return refund'}>{sr.reason || sr.originalSaleReference || 'Sales return refund'}</span>
 							</div>
 						</div>
 

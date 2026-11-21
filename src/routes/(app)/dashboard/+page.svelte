@@ -25,7 +25,7 @@
 	let recentTransactions: TransactionResponse[] = $state([]);
 	let pendingApprovals: any[] = $state([]);
 	let pendingExpenses: any[] = $state([]);
-	let pendingReceiptsCount = $state(0);
+	let openDealsCount = $state(0);
 	let pendingSupplierPaymentsCount = $state(0);
 	let loading = $state(true);
 	let errorMsg: string | null = $state(null);
@@ -47,12 +47,12 @@
 		abortController = new AbortController();
 
 		try {
-			const [summaryRes, transactionsRes, pendingRes, expensesRes, receiptsRes, supplierPaymentsRes] = await Promise.all([
+			const [summaryRes, transactionsRes, pendingRes, expensesRes, openDealsRes, supplierPaymentsRes] = await Promise.all([
 				getReconciliationSummary(abortController.signal),
 				getRecentTransactions(abortController.signal),
 				hasRole('master_accountant') ? apiFetch<any[]>('api/pending-approvals?status=pending').catch(() => []) : Promise.resolve([]),
 				hasRole('master_accountant') ? apiFetch<any[]>('api/Expenses').catch(() => []) : Promise.resolve([]),
-				hasRole('normal_accountant') ? apiFetch<any>('api/sales-entries/receipts?pageSize=100').catch(() => null) : Promise.resolve(null),
+				hasRole('normal_accountant') ? apiFetch<any>('api/sales-entries/open-deals/summary').catch(() => null) : Promise.resolve(null),
 				hasRole('normal_accountant') ? apiFetch<any>('api/supplier-payments/pending-count').catch(() => null) : Promise.resolve(null)
 			]);
 
@@ -65,8 +65,8 @@
 				pendingSupplierPaymentsCount = supplierPaymentsRes.count;
 			}
 
-			if (receiptsRes && receiptsRes.items) {
-				pendingReceiptsCount = receiptsRes.items.filter((r: any) => (r.status || '').toLowerCase() === 'pending').length;
+			if (openDealsRes && typeof openDealsRes.totalOpenDeals === 'number') {
+				openDealsCount = openDealsRes.totalOpenDeals;
 			}
 		} catch (err: any) {
 			if (err.name === 'AbortError') return;
@@ -189,33 +189,33 @@
 		<!-- Pending Receipts & Pending Supplier Payments Interactive Cards -->
 		{#if hasRole('normal_accountant')}
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-				<!-- Pending Receipts Card -->
+				<!-- Open Deals Card -->
 				<div
-					onclick={() => goto('/sales/receipts')}
-					class="bg-card border border-border hover:border-emerald-500/50 rounded-xl p-3.5 shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md group"
+					onclick={() => goto('/sales/open-deals')}
+					class="bg-card border border-border hover:border-amber-500/50 rounded-xl p-3.5 shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md group"
 					role="button"
 					tabindex="0"
-					onkeydown={(e) => e.key === 'Enter' && goto('/sales/receipts')}
+					onkeydown={(e) => e.key === 'Enter' && goto('/sales/open-deals')}
 				>
 					<div class="flex items-center gap-3 min-w-0">
-						<div class="p-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg group-hover:scale-105 transition-transform shrink-0">
-							<Receipt class="h-4.5 w-4.5" />
+						<div class="p-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg group-hover:scale-105 transition-transform shrink-0">
+							<Briefcase class="h-4.5 w-4.5" />
 						</div>
 						<div class="min-w-0">
 							<div class="flex items-center gap-2">
-								<h3 class="text-xs font-bold text-foreground group-hover:text-emerald-600 transition-colors truncate">
-									Pending Receipts
+								<h3 class="text-xs font-bold text-foreground group-hover:text-amber-600 transition-colors truncate">
+									Open Deals
 								</h3>
-								<span class="px-2 py-0.2 rounded-full text-[11px] font-extrabold bg-emerald-600 text-white shrink-0">
-									{pendingReceiptsCount}
+								<span class="px-2 py-0.2 rounded-full text-[11px] font-extrabold bg-amber-600 text-white shrink-0">
+									{openDealsCount}
 								</span>
 							</div>
 							<p class="text-[11px] text-muted-foreground truncate mt-0.5">
-								{pendingReceiptsCount} unposted receipt{pendingReceiptsCount === 1 ? '' : 's'}
+								{openDealsCount} active open deal{openDealsCount === 1 ? '' : 's'}
 							</p>
 						</div>
 					</div>
-					<div class="flex items-center text-xs font-semibold text-emerald-600 group-hover:translate-x-0.5 transition-transform shrink-0 ml-2">
+					<div class="flex items-center text-xs font-semibold text-amber-600 group-hover:translate-x-0.5 transition-transform shrink-0 ml-2">
 						<span>Manage</span>
 						<ArrowRight class="h-3.5 w-3.5 ml-1" />
 					</div>
