@@ -3,6 +3,7 @@
 	import { apiFetch } from '$lib/api/api-client';
 	import MoneyDisplay from '$lib/components/MoneyDisplay.svelte';
 	import { DateDisplay } from '$lib/components';
+	import { getBahrainDateString } from '$lib/formatters/date';
 	import { Button } from '$lib/components/ui/button';
 	import { toast } from '$lib/stores/toast';
 	import { previewDocument } from '$lib/utils/preview-document';
@@ -153,7 +154,7 @@
 
 	function calculatePresetRange(preset: PresetType): { start: string; end: string } {
 		const now = new Date();
-		const todayStr = formatDateForInput(now);
+		const todayStr = getBahrainDateString(now);
 
 		if (preset === 'today') {
 			return { start: todayStr, end: todayStr };
@@ -161,18 +162,17 @@
 			const startOfWeek = new Date(now);
 			const dayOfWeek = (now.getDay() + 6) % 7; // Monday = 0
 			startOfWeek.setDate(now.getDate() - dayOfWeek);
-			startOfWeek.setHours(0, 0, 0, 0);
-			return { start: formatDateForInput(startOfWeek), end: todayStr };
+			return { start: getBahrainDateString(startOfWeek), end: todayStr };
 		} else if (preset === 'this_month') {
 			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-			return { start: formatDateForInput(startOfMonth), end: todayStr };
+			return { start: getBahrainDateString(startOfMonth), end: todayStr };
 		} else if (preset === 'last_30') {
 			const past30 = new Date();
 			past30.setDate(now.getDate() - 30);
-			return { start: formatDateForInput(past30), end: todayStr };
+			return { start: getBahrainDateString(past30), end: todayStr };
 		} else if (preset === 'this_year') {
 			const startOfYear = new Date(now.getFullYear(), 0, 1);
-			return { start: formatDateForInput(startOfYear), end: todayStr };
+			return { start: getBahrainDateString(startOfYear), end: todayStr };
 		} else {
 			return { start: '', end: '' };
 		}
@@ -246,16 +246,8 @@
 		loading = true;
 		try {
 			const params: Record<string, string> = {};
-			if (startDate) {
-				const start = new Date(startDate);
-				start.setHours(0, 0, 0, 0);
-				params.startDate = start.toISOString();
-			}
-			if (endDate) {
-				const end = new Date(endDate);
-				end.setHours(23, 59, 59, 999);
-				params.endDate = end.toISOString();
-			}
+			if (startDate) params.startDate = startDate;
+			if (endDate) params.endDate = endDate;
 			const res = await apiFetch<SalesmanReportResponse[]>('api/sales-entries/salesmen/report', { params });
 			rawReports = res || [];
 		} catch (err: any) {
@@ -272,16 +264,8 @@
 		entriesData = [];
 		try {
 			const params: Record<string, any> = { page: 1, pageSize: 500 };
-			if (indStartDate) {
-				const start = new Date(indStartDate);
-				start.setHours(0, 0, 0, 0);
-				params.startDate = start.toISOString();
-			}
-			if (indEndDate) {
-				const end = new Date(indEndDate);
-				end.setHours(23, 59, 59, 999);
-				params.endDate = end.toISOString();
-			}
+			if (indStartDate) params.startDate = indStartDate;
+			if (indEndDate) params.endDate = indEndDate;
 			const res = await apiFetch<any>(`api/sales-entries/${serviceType}`, { params });
 			const all: any[] = res?.items ?? [];
 			// Filter by salesman numeric id first; fallback to salesman name
@@ -322,16 +306,8 @@
 		profitRecordsData = [];
 		try {
 			const params: Record<string, string> = {};
-			if (indStartDate) {
-				const start = new Date(indStartDate);
-				start.setHours(0, 0, 0, 0);
-				params.startDate = start.toISOString();
-			}
-			if (indEndDate) {
-				const end = new Date(indEndDate);
-				end.setHours(23, 59, 59, 999);
-				params.endDate = end.toISOString();
-			}
+			if (indStartDate) params.startDate = indStartDate;
+			if (indEndDate) params.endDate = indEndDate;
 			const [res, dbMods] = await Promise.all([
 				apiFetch<SalesmanProfitRecord[]>(`api/sales-entries/salesmen/${salesmanId}/profit-records`, { params }).catch(() => []),
 				apiFetch<any[]>(`api/sales-entries/profit-adjustments`, { params: { salesmanId } }).catch(() => [])
@@ -371,16 +347,8 @@
 		indSummaryLoading = true;
 		try {
 			const params: Record<string, string> = {};
-			if (indStartDate) {
-				const start = new Date(indStartDate);
-				start.setHours(0, 0, 0, 0);
-				params.startDate = start.toISOString();
-			}
-			if (indEndDate) {
-				const end = new Date(indEndDate);
-				end.setHours(23, 59, 59, 999);
-				params.endDate = end.toISOString();
-			}
+			if (indStartDate) params.startDate = indStartDate;
+			if (indEndDate) params.endDate = indEndDate;
 			const res = await apiFetch<SalesmanReportResponse[]>('api/sales-entries/salesmen/report', { params });
 			const found = res?.find(x => x.id === salesmanId);
 			if (found) {

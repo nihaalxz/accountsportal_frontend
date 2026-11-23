@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { apiFetch } from '$lib/api/api-client';
 	import MoneyDisplay from '$lib/components/MoneyDisplay.svelte';
+	import { getBahrainDateString } from '$lib/formatters/date';
 	import { Button } from '$lib/components/ui/button';
 	import { toast } from '$lib/stores/toast';
 	import { previewDocument } from '$lib/utils/preview-document';
@@ -90,7 +91,7 @@
 
 	function calculatePresetRange(preset: PresetType): { start: string; end: string } {
 		const now = new Date();
-		const todayStr = formatDateForInput(now);
+		const todayStr = getBahrainDateString(now);
 
 		if (preset === 'today') {
 			return { start: todayStr, end: todayStr };
@@ -98,19 +99,18 @@
 			const startOfWeek = new Date(now);
 			const dayOfWeek = (now.getDay() + 6) % 7; // Monday = 0
 			startOfWeek.setDate(now.getDate() - dayOfWeek);
-			startOfWeek.setHours(0, 0, 0, 0);
-			return { start: formatDateForInput(startOfWeek), end: todayStr };
+			return { start: getBahrainDateString(startOfWeek), end: todayStr };
 		} else if (preset === 'this_month') {
 			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 			const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-			return { start: formatDateForInput(startOfMonth), end: formatDateForInput(endOfMonth) };
+			return { start: getBahrainDateString(startOfMonth), end: getBahrainDateString(endOfMonth) };
 		} else if (preset === 'last_30') {
 			const past30 = new Date();
 			past30.setDate(now.getDate() - 30);
-			return { start: formatDateForInput(past30), end: todayStr };
+			return { start: getBahrainDateString(past30), end: todayStr };
 		} else if (preset === 'this_year') {
 			const startOfYear = new Date(now.getFullYear(), 0, 1);
-			return { start: formatDateForInput(startOfYear), end: todayStr };
+			return { start: getBahrainDateString(startOfYear), end: todayStr };
 		} else {
 			return { start: '', end: '' };
 		}

@@ -16,9 +16,7 @@
 		Clock,
 		ArrowUpRight,
 		RefreshCw,
-		BarChart3,
-		Receipt,
-		ArrowRight
+		BarChart3
 	} from 'lucide-svelte';
 
 	let loading = $state(true);
@@ -26,29 +24,43 @@
 	let reconciliationSummary = $state<any>(null);
 	let recentTransactions = $state<any[]>([]);
 	let salesmenList = $state<any[]>([]);
-	let pendingReceiptsCount = $state(0);
+	let todayPnl = $state<any>(null);
+	let todayIncomingTotal = $state(0);
 
 	// Today's Date (Bahrain AST)
 	const todayStr = getBahrainDateString();
 
 	// Derived values for today
 	let todaysBookingsCount = $derived(() => {
+		if (dashboardData?.todaysBookingsCount != null && dashboardData.todaysBookingsCount > 0) {
+			return dashboardData.todaysBookingsCount;
+		}
+		if (todayPnl?.totalBookingCount != null) {
+			return todayPnl.totalBookingCount;
+		}
 		return 0;
 	});
 
-	let todaysCollections = $derived(() => {
-		if (!recentTransactions) return 0;
-		// Sum of incoming transactions approved today in Bahrain
-		return recentTransactions
-			.filter(t => {
-				if (t.transactionType !== 'incoming' || !t.createdAt) return false;
-				const p = parseDate(t.createdAt);
-				return p && getBahrainDateString(p) === todayStr;
-			})
-			.reduce((sum, t) => sum + t.amount, 0);
+	let todaysReceiptCollection = $derived(() => {
+		if (dashboardData?.todaysReceiptCollection != null && dashboardData.todaysReceiptCollection > 0) {
+			return dashboardData.todaysReceiptCollection;
+		}
+		if (dashboardData?.todaysCollections != null && dashboardData.todaysCollections > 0) {
+			return dashboardData.todaysCollections;
+		}
+		return todayIncomingTotal;
 	});
 
 	let todaysRevenue = $derived(() => {
+		if (dashboardData?.todaysRevenue != null && dashboardData.todaysRevenue > 0) {
+			return dashboardData.todaysRevenue;
+		}
+		if (todayPnl?.grossBookingRevenue != null && todayPnl.grossBookingRevenue > 0) {
+			return todayPnl.grossBookingRevenue;
+		}
+		if (todayPnl?.netRevenue != null && todayPnl.netRevenue > 0) {
+			return todayPnl.netRevenue;
+		}
 		return 0;
 	});
 
@@ -93,22 +105,21 @@
 		loading = true;
 		try {
 			// Run parallel fetches
-			const [dash, recon, txns, salesmen, receiptsRes] = await Promise.all([
+			const [dash, recon, txns, salesmen, pnlRes, incomingTxnsRes] = await Promise.all([
 				apiFetch<any>('api/sales-entries/dashboard'),
 				apiFetch<any>('api/reconciliation/summary'),
 				apiFetch<any[]>('api/Transaction?pageSize=10'),
 				apiFetch<any[]>('api/sales-entries/salesmen/report'),
-				apiFetch<any>('api/sales-entries/receipts?pageSize=100').catch(() => null)
+				apiFetch<any>(`api/reporting/profit-loss/summary?startDate=${todayStr}&endDate=${todayStr}`).catch(() => null),
+				apiFetch<any[]>(`api/Transaction?type=incoming&status=approved&startDate=${todayStr}&endDate=${todayStr}&pageSize=1000`).catch(() => [])
 			]);
 
 			dashboardData = dash;
 			reconciliationSummary = recon;
 			recentTransactions = txns || [];
 			salesmenList = salesmen || [];
-
-			if (receiptsRes && receiptsRes.items) {
-				pendingReceiptsCount = receiptsRes.items.filter((r: any) => (r.status || '').toLowerCase() === 'pending').length;
-			}
+			todayPnl = pnlRes;
+			todayIncomingTotal = (incomingTxnsRes || []).reduce((sum: number, t: any) => sum + (t.amount || 0), 0);
 		} catch (err) {
 			console.error('Failed to load modernized dashboard data:', err);
 		} finally {
@@ -172,15 +183,15 @@
 				</div>
 			</div>
 
-			<!-- Today's Collections -->
+			<!-- Today's Receipt Collection -->
 			<div class="bg-card border border-border rounded-2xl p-5 shadow-xs flex items-center gap-4 hover:border-emerald-500/20 transition-colors">
 				<div class="p-3 bg-emerald-500/10 text-emerald-600 rounded-xl">
 					<DollarSign class="h-6 w-6" />
 				</div>
 				<div>
-					<p class="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Today's Collections</p>
-					<h3 class="text-lg font-bold mt-1 text-foreground"><MoneyDisplay amount={todaysCollections()} /></h3>
-					<p class="text-[9px] text-emerald-600 font-semibold mt-0.5">Cleared customer payments</p>
+					<p class="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Today's Receipt Collection</p>
+					<h3 class="text-lg font-bold mt-1 text-foreground"><MoneyDisplay amount={todaysReceiptCollection()} /></h3>
+					<p class="text-[9px] text-emerald-600 font-semibold mt-0.5">Cleared customer receipts</p>
 				</div>
 			</div>
 
@@ -192,7 +203,7 @@
 				<div>
 					<p class="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Today's Revenue</p>
 					<h3 class="text-lg font-bold mt-1 text-foreground"><MoneyDisplay amount={todaysRevenue()} /></h3>
-					<p class="text-[9px] text-muted-foreground mt-0.5">Net markup margin today</p>
+					<p class="text-[9px] text-muted-foreground mt-0.5">Total sales booked today</p>
 				</div>
 			</div>
 
@@ -267,43 +278,6 @@
 				</div>
 			</div>
 		</div>
-
-		<!-- Pending Receipts Interactive Card -->
-		<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-			<!-- Pending Receipts Card -->
-			<div
-				onclick={() => goto('/sales/receipts')}
-				class="bg-card border border-border hover:border-emerald-500/50 rounded-2xl p-5 shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md group"
-				role="button"
-				tabindex="0"
-				onkeydown={(e) => e.key === 'Enter' && goto('/sales/receipts')}
-			>
-				<div class="flex items-center gap-4">
-					<div class="p-3 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl group-hover:scale-105 transition-transform">
-						<Receipt class="h-6 w-6" />
-					</div>
-					<div>
-						<div class="flex items-center gap-2">
-							<h3 class="text-sm font-bold text-foreground group-hover:text-emerald-600 transition-colors">
-								Pending Receipts
-							</h3>
-							<span class="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-emerald-600 text-white">
-								{pendingReceiptsCount}
-							</span>
-						</div>
-						<p class="text-xs text-muted-foreground mt-0.5">
-							{pendingReceiptsCount} customer payment collection{pendingReceiptsCount === 1 ? '' : 's'} awaiting posting
-						</p>
-					</div>
-				</div>
-				<div class="flex items-center text-xs font-semibold text-emerald-600 group-hover:translate-x-1 transition-transform shrink-0">
-					<span>Manage ({pendingReceiptsCount})</span>
-					<ArrowRight class="h-4 w-4 ml-1" />
-				</div>
-			</div>
-		</div>
-
-
 
 		<!-- Charts & Activity Row -->
 		<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
