@@ -147,6 +147,22 @@
 	let showCostDetails = $state(true);
 	let showExpenseDetails = $state(true);
 
+	// Filter out non-operational contra items (e.g. Head Balance Withdrawal, Internal Contra Transfer)
+	const operationalExpenseItems = $derived.by(() => {
+		return (pnlData?.expenseItems ?? []).filter((e) => {
+			const name = (e.categoryName || '').toLowerCase();
+			return !name.includes('contra') && !name.includes('head balance withdrawal') && !name.includes('wallet withdrawal');
+		});
+	});
+
+	const totalApprovedExpenses = $derived.by(() => {
+		return operationalExpenseItems.reduce((acc, x) => acc + x.totalAmount, 0);
+	});
+
+	const totalOperatingExpenses = $derived.by(() => {
+		return totalApprovedExpenses + (pnlData?.totalPayrollExpenses ?? 0);
+	});
+
 	// Derived calculations driven by finalized profit
 	const finalGrossProfit = $derived(pnlData?.finalizedGrossProfit ?? 0);
 	const finalGrossMargin = $derived(
@@ -155,7 +171,7 @@
 			: 0
 	);
 	const finalNetProfit = $derived(
-		pnlData ? pnlData.finalizedGrossProfit - pnlData.totalOperatingExpenses : 0
+		pnlData ? pnlData.finalizedGrossProfit - totalOperatingExpenses : 0
 	);
 	const isFinalNetProfitable = $derived(finalNetProfit >= 0);
 	const finalNetMargin = $derived(
@@ -319,7 +335,7 @@
 		]);
 
 		// Expenses
-		pnlData.expenseItems.forEach((e) => {
+		operationalExpenseItems.forEach((e) => {
 			rows.push([
 				'4. Operating Expenses',
 				`Expense — ${e.categoryName}`,
@@ -351,16 +367,16 @@
 			'4. Operating Expenses Subtotal',
 			'TOTAL OPERATING EXPENSES',
 			'Operating Overhead',
-			pnlData.expenseItems.reduce((acc, x) => acc + x.expenseCount, 0),
+			operationalExpenseItems.reduce((acc, x) => acc + x.expenseCount, 0),
 			'—',
-			pnlData.totalOperatingExpenses.toFixed(3),
+			totalOperatingExpenses.toFixed(3),
 			'—',
 			'—',
 			'—'
 		]);
 
 		// Net Profit (Finalized)
-		const csvFinalNet = pnlData.finalizedNetProfit ?? (csvFinalGross - pnlData.totalOperatingExpenses);
+		const csvFinalNet = finalNetProfit;
 		const csvFinalNetMargin = pnlData.netRevenue > 0 ? (csvFinalNet / pnlData.netRevenue) * 100 : 0;
 		rows.push([
 			'5. Net Bottom Line',
@@ -599,10 +615,10 @@
 			<div class="bg-card border border-border rounded-2xl p-4 shadow-xs space-y-1">
 				<span class="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Operating Expenses</span>
 				<span class="text-lg font-bold font-mono text-foreground block">
-					<MoneyDisplay amount={pnlData.totalOperatingExpenses} />
+					<MoneyDisplay amount={totalOperatingExpenses} />
 				</span>
 				<div class="text-[10px] text-muted-foreground flex items-center justify-between">
-					<span>Overhead: {pnlData.totalApprovedExpenses.toFixed(3)}</span>
+					<span>Overhead: {totalApprovedExpenses.toFixed(3)}</span>
 					<span>Payroll: {pnlData.totalPayrollExpenses.toFixed(3)}</span>
 				</div>
 			</div>
@@ -927,18 +943,18 @@
 								<span class="font-bold text-xs uppercase tracking-wider text-foreground">3. Operating Expenses (Overheads & Payroll)</span>
 							</div>
 							<span class="font-mono font-bold text-foreground">
-								<MoneyDisplay amount={pnlData.totalOperatingExpenses} />
+								<MoneyDisplay amount={totalOperatingExpenses} />
 							</span>
 						</button>
 
 						{#if showExpenseDetails}
 							<div class="p-4 space-y-2 divide-y divide-border/40">
-								{#if pnlData.expenseItems.length === 0 && pnlData.totalPayrollExpenses === 0}
+								{#if operationalExpenseItems.length === 0 && pnlData.totalPayrollExpenses === 0}
 									<div class="py-4 text-center text-muted-foreground text-xs">
 										No operational expenses or salary payouts recorded in this period.
 									</div>
 								{:else}
-									{#each pnlData.expenseItems as exp}
+									{#each operationalExpenseItems as exp}
 										<div class="pt-2 flex items-center justify-between hover:bg-muted/10 px-2 rounded-lg">
 											<span class="text-muted-foreground flex items-center gap-2">
 												<span class="w-2 h-2 rounded-full bg-rose-500"></span>
@@ -961,7 +977,7 @@
 
 								<div class="pt-3 flex items-center justify-between font-bold text-foreground text-xs px-2 bg-muted/20 py-2 rounded-lg">
 									<span>Total Operating Expenses</span>
-									<span class="font-mono font-bold"><MoneyDisplay amount={pnlData.totalOperatingExpenses} /></span>
+									<span class="font-mono font-bold"><MoneyDisplay amount={totalOperatingExpenses} /></span>
 								</div>
 							</div>
 						{/if}
@@ -979,7 +995,7 @@
 							</h3>
 							<p class="text-xs text-muted-foreground">
 								Net Profit Margin: <strong class="font-mono {isFinalNetProfitable ? 'text-emerald-600' : 'text-rose-600'}">{finalNetMargin.toFixed(1)}%</strong>
-								(Finalized Profit {finalGrossProfit.toFixed(3)} - Operating Expenses {pnlData.totalOperatingExpenses.toFixed(3)})
+								(Finalized Profit {finalGrossProfit.toFixed(3)} - Operating Expenses {totalOperatingExpenses.toFixed(3)})
 							</p>
 						</div>
 

@@ -24,6 +24,7 @@
 	let reconciliationSummary = $state<any>(null);
 	let recentTransactions = $state<any[]>([]);
 	let salesmenList = $state<any[]>([]);
+	let todaySalesmen = $state<any[]>([]);
 	let todayPnl = $state<any>(null);
 	let todayIncomingTotal = $state(0);
 
@@ -35,10 +36,15 @@
 		if (dashboardData?.todaysBookingsCount != null && dashboardData.todaysBookingsCount > 0) {
 			return dashboardData.todaysBookingsCount;
 		}
-		if (todayPnl?.totalBookingCount != null) {
-			return todayPnl.totalBookingCount;
+		let count = 0;
+		if (todayPnl?.revenueItems && Array.isArray(todayPnl.revenueItems)) {
+			count = todayPnl.revenueItems.reduce((sum: number, r: any) => sum + (r.bookingCount || 0), 0);
 		}
-		return 0;
+		if (todaySalesmen && Array.isArray(todaySalesmen)) {
+			const sCount = todaySalesmen.reduce((sum: number, s: any) => sum + (s.bookingsCount || 0), 0);
+			count = Math.max(count, sCount);
+		}
+		return count;
 	});
 
 	let todaysReceiptCollection = $derived(() => {
@@ -55,13 +61,17 @@
 		if (dashboardData?.todaysRevenue != null && dashboardData.todaysRevenue > 0) {
 			return dashboardData.todaysRevenue;
 		}
+		let rev = 0;
 		if (todayPnl?.grossBookingRevenue != null && todayPnl.grossBookingRevenue > 0) {
-			return todayPnl.grossBookingRevenue;
+			rev = todayPnl.grossBookingRevenue;
+		} else if (todayPnl?.netRevenue != null && todayPnl.netRevenue > 0) {
+			rev = todayPnl.netRevenue;
 		}
-		if (todayPnl?.netRevenue != null && todayPnl.netRevenue > 0) {
-			return todayPnl.netRevenue;
+		if (todaySalesmen && Array.isArray(todaySalesmen)) {
+			const sRev = todaySalesmen.reduce((sum: number, s: any) => sum + (s.totalSalesValue || 0), 0);
+			rev = Math.max(rev, sRev);
 		}
-		return 0;
+		return rev;
 	});
 
 	let totalReceivables = $derived(() => {
@@ -105,21 +115,31 @@
 		loading = true;
 		try {
 			// Run parallel fetches
-			const [dash, recon, txns, salesmen, pnlRes, incomingTxnsRes] = await Promise.all([
+			const [dash, recon, txns, salesmen, todaySales, pnlRes, incomingTxnsRes, receiptsRes, accountsReceiptsRes] = await Promise.all([
 				apiFetch<any>('api/sales-entries/dashboard'),
 				apiFetch<any>('api/reconciliation/summary'),
 				apiFetch<any[]>('api/Transaction?pageSize=10'),
 				apiFetch<any[]>('api/sales-entries/salesmen/report'),
+				apiFetch<any[]>(`api/sales-entries/salesmen/report?startDate=${todayStr}&endDate=${todayStr}T23:59:59`).catch(() => []),
 				apiFetch<any>(`api/reporting/profit-loss/summary?startDate=${todayStr}&endDate=${todayStr}`).catch(() => null),
-				apiFetch<any[]>(`api/Transaction?type=incoming&status=approved&startDate=${todayStr}&endDate=${todayStr}&pageSize=1000`).catch(() => [])
+				apiFetch<any[]>(`api/Transaction?status=approved&startDate=${todayStr}&endDate=${todayStr}&pageSize=1000`).catch(() => []),
+				apiFetch<any>(`api/sales-entries/receipts?startDate=${todayStr}&endDate=${todayStr}T23:59:59&pageSize=1000`).catch(() => null),
+				apiFetch<any>(`api/sales-entries/accounts-receipts?startDate=${todayStr}&endDate=${todayStr}T23:59:59&pageSize=1000`).catch(() => null)
 			]);
 
 			dashboardData = dash;
 			reconciliationSummary = recon;
 			recentTransactions = txns || [];
 			salesmenList = salesmen || [];
+			todaySalesmen = todaySales || [];
 			todayPnl = pnlRes;
-			todayIncomingTotal = (incomingTxnsRes || []).reduce((sum: number, t: any) => sum + (t.amount || 0), 0);
+
+			const incomingSum = (incomingTxnsRes || [])
+				.filter((t: any) => t.type?.toLowerCase() === 'incoming' || t.transactionType?.toLowerCase() === 'incoming' || t.referenceType?.toLowerCase() === 'receipt' || t.receiptOrigin != null)
+				.reduce((sum: number, t: any) => sum + (t.amount || 0), 0);
+			const receiptsSum = (receiptsRes?.items || []).reduce((sum: number, r: any) => sum + (r.amount || 0), 0);
+			const accountsReceiptsSum = (accountsReceiptsRes?.items || []).reduce((sum: number, r: any) => sum + (r.amount || 0), 0);
+			todayIncomingTotal = Math.max(incomingSum, receiptsSum, accountsReceiptsSum);
 		} catch (err) {
 			console.error('Failed to load modernized dashboard data:', err);
 		} finally {

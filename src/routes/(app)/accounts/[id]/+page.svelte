@@ -332,18 +332,6 @@
 						<span>New Receipt</span>
 					</Button>
 
-					<!-- Correct Balance -->
-					<Button
-						variant="outline"
-						class="h-8.5 rounded-xl font-semibold text-xs cursor-pointer flex items-center gap-1"
-						onclick={() => {
-							correctionOpen = true;
-							handleFormEdit();
-						}}
-					>
-						<Plus class="h-3.5 w-3.5" />
-						<span>Correct Balance</span>
-					</Button>
 
 					<!-- Toggle Status -->
 					<Button

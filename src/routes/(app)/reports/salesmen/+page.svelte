@@ -165,7 +165,8 @@
 			return { start: getBahrainDateString(startOfWeek), end: todayStr };
 		} else if (preset === 'this_month') {
 			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-			return { start: getBahrainDateString(startOfMonth), end: todayStr };
+			const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+			return { start: getBahrainDateString(startOfMonth), end: getBahrainDateString(endOfMonth) };
 		} else if (preset === 'last_30') {
 			const past30 = new Date();
 			past30.setDate(now.getDate() - 30);
@@ -247,8 +248,11 @@
 		try {
 			const params: Record<string, string> = {};
 			if (startDate) params.startDate = startDate;
-			if (endDate) params.endDate = endDate;
-			const res = await apiFetch<SalesmanReportResponse[]>('api/sales-entries/salesmen/report', { params });
+			if (endDate) params.endDate = endDate.includes('T') ? endDate : `${endDate}T23:59:59`;
+			const query = new URLSearchParams(params).toString();
+			const res = await apiFetch<SalesmanReportResponse[]>(
+				`api/sales-entries/salesmen/report${query ? `?${query}` : ''}`
+			);
 			rawReports = res || [];
 		} catch (err: any) {
 			toast.error(err.message || 'Failed to load salesmen report.');
@@ -265,8 +269,9 @@
 		try {
 			const params: Record<string, any> = { page: 1, pageSize: 500 };
 			if (indStartDate) params.startDate = indStartDate;
-			if (indEndDate) params.endDate = indEndDate;
-			const res = await apiFetch<any>(`api/sales-entries/${serviceType}`, { params });
+			if (indEndDate) params.endDate = indEndDate.includes('T') ? indEndDate : `${indEndDate}T23:59:59`;
+			const query = new URLSearchParams(params).toString();
+			const res = await apiFetch<any>(`api/sales-entries/${serviceType}${query ? `?${query}` : ''}`);
 			const all: any[] = res?.items ?? [];
 			// Filter by salesman numeric id first; fallback to salesman name
 			entriesData = all.filter((e: any) => {
@@ -307,9 +312,10 @@
 		try {
 			const params: Record<string, string> = {};
 			if (indStartDate) params.startDate = indStartDate;
-			if (indEndDate) params.endDate = indEndDate;
+			if (indEndDate) params.endDate = indEndDate.includes('T') ? indEndDate : `${indEndDate}T23:59:59`;
+			const query = new URLSearchParams(params).toString();
 			const [res, dbMods] = await Promise.all([
-				apiFetch<SalesmanProfitRecord[]>(`api/sales-entries/salesmen/${salesmanId}/profit-records`, { params }).catch(() => []),
+				apiFetch<SalesmanProfitRecord[]>(`api/sales-entries/salesmen/${salesmanId}/profit-records${query ? `?${query}` : ''}`).catch(() => []),
 				apiFetch<any[]>(`api/sales-entries/profit-adjustments`, { params: { salesmanId } }).catch(() => [])
 			]);
 			const rawRecords = res || [];
@@ -348,8 +354,9 @@
 		try {
 			const params: Record<string, string> = {};
 			if (indStartDate) params.startDate = indStartDate;
-			if (indEndDate) params.endDate = indEndDate;
-			const res = await apiFetch<SalesmanReportResponse[]>('api/sales-entries/salesmen/report', { params });
+			if (indEndDate) params.endDate = indEndDate.includes('T') ? indEndDate : `${indEndDate}T23:59:59`;
+			const query = new URLSearchParams(params).toString();
+			const res = await apiFetch<SalesmanReportResponse[]>(`api/sales-entries/salesmen/report${query ? `?${query}` : ''}`);
 			const found = res?.find(x => x.id === salesmanId);
 			if (found) {
 				indSalesmanReport = found;
