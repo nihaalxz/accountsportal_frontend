@@ -587,13 +587,15 @@
 			const headers = [
 				'Document #',
 				'Category',
+				'Deal Status',
 				'Client / Pax',
 				'Payable Sale (BHD)',
 				'Supplier Cost (BHD)',
 				'Approved Cost (BHD)',
+				'Open Deal (BHD)',
+				'Closed Deal (BHD)',
 				'Net Profit (BHD)',
 				'Margin %',
-				'Deal Status',
 				'Profit Type',
 				'Cost Source',
 				'Date'
@@ -602,6 +604,7 @@
 			const rows: (string | number | boolean | null | undefined)[][] = recordsToExport.map((row) => {
 				const docNo = row.documentNumber || `#${row.bookingId}`;
 				const category = (row.bookingType || '—').toUpperCase();
+				const dealStatus = row.isFinal ? 'Closed Deal' : 'Open Deal';
 				const client = row.clientName || '—';
 				const sale = Number(row.payableAmount || 0);
 				const supplierCost = Number(row.finalSupplierCost || 0);
@@ -609,8 +612,9 @@
 					? Number(row.accountsApprovedTotal).toFixed(3)
 					: '—';
 				const profit = Number(row.profitAmount || 0);
+				const openDeal = !row.isFinal ? profit.toFixed(3) : '—';
+				const closedDeal = row.isFinal ? profit.toFixed(3) : '—';
 				const margin = sale > 0 ? `${((profit / sale) * 100).toFixed(1)}%` : '—';
-				const dealStatus = row.isFinal ? 'Closed' : 'Open';
 				const profitType = formatProfitType(row.profitType);
 				const costSource = formatCostSource(row.supplierCostSource);
 				const rawDate = row.bookingCreatedAt || row.createdAt;
@@ -619,13 +623,15 @@
 				return [
 					docNo,
 					category,
+					dealStatus,
 					client,
 					sale.toFixed(3),
 					supplierCost.toFixed(3),
 					approvedCost,
+					openDeal,
+					closedDeal,
 					profit.toFixed(3),
 					margin,
-					dealStatus,
 					profitType,
 					costSource,
 					dateFormatted
@@ -635,6 +641,8 @@
 			const totalSale = recordsToExport.reduce((acc, r) => acc + (r.payableAmount || 0), 0);
 			const totalSupplierCost = recordsToExport.reduce((acc, r) => acc + (r.finalSupplierCost || 0), 0);
 			const totalApprovedCost = recordsToExport.reduce((acc, r) => acc + (r.accountsApprovedTotal ?? 0), 0);
+			const totalOpenDealProfit = recordsToExport.filter((r) => !r.isFinal).reduce((acc, r) => acc + (r.profitAmount || 0), 0);
+			const totalClosedDealProfit = recordsToExport.filter((r) => r.isFinal).reduce((acc, r) => acc + (r.profitAmount || 0), 0);
 			const totalProfit = recordsToExport.reduce((acc, r) => acc + (r.profitAmount || 0), 0);
 			const totalMargin = totalSale > 0 ? `${((totalProfit / totalSale) * 100).toFixed(1)}%` : '—';
 			const finalizedCount = recordsToExport.filter((r) => r.isFinal).length;
@@ -642,13 +650,15 @@
 			rows.push([
 				'TOTAL',
 				'',
-				`${recordsToExport.length} records (${finalizedCount} Closed / ${recordsToExport.length - finalizedCount} Open)`,
+				`${finalizedCount} Closed / ${recordsToExport.length - finalizedCount} Open`,
+				`${recordsToExport.length} records`,
 				totalSale.toFixed(3),
 				totalSupplierCost.toFixed(3),
 				totalApprovedCost > 0 ? totalApprovedCost.toFixed(3) : '—',
+				totalOpenDealProfit.toFixed(3),
+				totalClosedDealProfit.toFixed(3),
 				totalProfit.toFixed(3),
 				totalMargin,
-				'',
 				'',
 				'',
 				''
@@ -1485,22 +1495,38 @@
 														</div>
 													{:else}
 														<!-- Profit Records Stat Bar -->
-														<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-muted/20 p-3 rounded-xl border border-border/60">
+														{@const openDealsList = filteredProfitRecordsData.filter(r => !r.isFinal)}
+														{@const closedDealsList = filteredProfitRecordsData.filter(r => r.isFinal)}
+														{@const openDealsProfit = openDealsList.reduce((acc, r) => acc + (r.profitAmount || 0), 0)}
+														{@const closedDealsProfit = closedDealsList.reduce((acc, r) => acc + (r.profitAmount || 0), 0)}
+														<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-muted/20 p-3 rounded-xl border border-border/60">
 															<div class="space-y-0.5">
-																<span class="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Accurate Net Profit</span>
+																<span class="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Closed Deals (Final Profit)</span>
 																<span class="text-sm font-bold font-mono text-emerald-600 dark:text-emerald-400">
-																	<MoneyDisplay amount={filteredProfitRecordsData.reduce((acc, r) => acc + (r.profitAmount || 0), 0)} />
+																	<MoneyDisplay amount={closedDealsProfit} />
 																</span>
+																<span class="text-[10px] text-muted-foreground block font-mono">{closedDealsList.length} finalized deals</span>
+															</div>
+															<div class="space-y-0.5">
+																<span class="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Open Deals (Estimated)</span>
+																<span class="text-sm font-bold font-mono text-amber-600 dark:text-amber-400">
+																	<MoneyDisplay amount={openDealsProfit} />
+																</span>
+																<span class="text-[10px] text-muted-foreground block font-mono">{openDealsList.length} open / unapproved</span>
+															</div>
+															<div class="space-y-0.5">
+																<span class="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Combined Net Profit</span>
+																<span class="text-sm font-bold font-mono text-foreground">
+																	<MoneyDisplay amount={openDealsProfit + closedDealsProfit} />
+																</span>
+																<span class="text-[10px] text-muted-foreground block font-mono">Open + Closed margin</span>
 															</div>
 															<div class="space-y-0.5">
 																<span class="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Total Bookings Tracked</span>
-																<span class="text-sm font-bold font-mono text-foreground">{filteredProfitRecordsData.length} records</span>
-															</div>
-															<div class="space-y-0.5">
-																<span class="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Finalized Profit Records</span>
 																<span class="text-sm font-bold font-mono text-primary">
-																	{filteredProfitRecordsData.filter(r => r.isFinal).length} / {filteredProfitRecordsData.length}
+																	{closedDealsList.length} / {filteredProfitRecordsData.length} finalized
 																</span>
+																<span class="text-[10px] text-muted-foreground block font-mono">{filteredProfitRecordsData.length} total records</span>
 															</div>
 														</div>
 
@@ -1509,11 +1535,13 @@
 																<thead>
 																	<tr class="bg-muted/20 border-b border-border/50 text-muted-foreground font-semibold">
 																		<th class="p-2.5 w-32">Document #</th>
-																		<th class="p-2.5 w-28">Category</th>
+																		<th class="p-2.5 w-24">Category</th>
+																		<th class="p-2.5 text-center w-28">Deal Status</th>
 																		<th class="p-2.5 text-right w-28">Payable Sale</th>
 																		<th class="p-2.5 text-right w-28">Supplier Cost</th>
 																		<th class="p-2.5 text-right w-28">Approved Cost</th>
-																		<th class="p-2.5 text-right w-28">Net Profit</th>
+																		<th class="p-2.5 text-right w-28">Open Deal</th>
+																		<th class="p-2.5 text-right w-28">Closed Deal</th>
 																		<th class="p-2.5 w-28">Date</th>
 																	</tr>
 																</thead>
@@ -1522,6 +1550,20 @@
 																		<tr class="hover:bg-muted/5 transition-colors">
 																			<td class="p-2.5 font-mono font-bold text-foreground text-[10px]">{row.documentNumber || `#${row.bookingId}`}</td>
 																			<td class="p-2.5 text-muted-foreground font-semibold uppercase">{row.bookingType}</td>
+																			<td class="p-2.5 text-center">
+																				{#if row.isFinal}
+																					<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800">
+																						Closed Deal
+																					</span>
+																				{:else}
+																					<span
+																						class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"
+																						title={row.accountsApprovedTotal === null || row.accountsApprovedTotal === undefined ? 'Cost pending Accounts approval' : 'Deal still open'}
+																					>
+																						Open Deal
+																					</span>
+																				{/if}
+																			</td>
 																			<td class="p-2.5 text-right font-mono font-bold text-foreground"><MoneyDisplay amount={row.payableAmount} /></td>
 																			<td class="p-2.5 text-right font-mono text-muted-foreground"><MoneyDisplay amount={row.finalSupplierCost} /></td>
 																			<td class="p-2.5 text-right font-mono text-muted-foreground">
@@ -1531,8 +1573,19 @@
 																					<span class="text-muted-foreground/40">—</span>
 																				{/if}
 																			</td>
+																			<td class="p-2.5 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
+																				{#if !row.isFinal}
+																					<MoneyDisplay amount={row.profitAmount} />
+																				{:else}
+																					<span class="text-muted-foreground/40 font-normal">—</span>
+																				{/if}
+																			</td>
 																			<td class="p-2.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-																				<MoneyDisplay amount={row.profitAmount} />
+																				{#if row.isFinal}
+																					<MoneyDisplay amount={row.profitAmount} />
+																				{:else}
+																					<span class="text-muted-foreground/40 font-normal">—</span>
+																				{/if}
 																			</td>
 																			<td class="p-2.5 font-mono text-muted-foreground text-[10px]">
 																				<DateDisplay value={row.bookingCreatedAt} />
@@ -1540,6 +1593,17 @@
 																		</tr>
 																	{/each}
 																</tbody>
+																<tfoot class="bg-muted/20 border-t border-border/60 font-bold text-foreground">
+																	<tr>
+																		<td colspan="3" class="p-2.5 text-xs">Totals ({filteredProfitRecordsData.length} records)</td>
+																		<td class="p-2.5 text-right font-mono"><MoneyDisplay amount={filteredProfitRecordsData.reduce((acc, r) => acc + (r.payableAmount || 0), 0)} /></td>
+																		<td class="p-2.5 text-right font-mono text-muted-foreground"><MoneyDisplay amount={filteredProfitRecordsData.reduce((acc, r) => acc + (r.finalSupplierCost || 0), 0)} /></td>
+																		<td class="p-2.5 text-right font-mono text-muted-foreground"><MoneyDisplay amount={filteredProfitRecordsData.reduce((acc, r) => acc + (r.accountsApprovedTotal ?? 0), 0)} /></td>
+																		<td class="p-2.5 text-right font-mono text-amber-600 dark:text-amber-400"><MoneyDisplay amount={openDealsProfit} /></td>
+																		<td class="p-2.5 text-right font-mono text-emerald-600 dark:text-emerald-400"><MoneyDisplay amount={closedDealsProfit} /></td>
+																		<td class="p-2.5"></td>
+																	</tr>
+																</tfoot>
 															</table>
 														</div>
 														<p class="text-[10px] text-muted-foreground text-right pt-1">
