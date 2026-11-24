@@ -1280,6 +1280,11 @@
 					<Lock class="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" /> Deal Closed (Locked)
 				</span>
 			{/if}
+			{#if serviceType === 'visa' && (sd.countryName || sd.country)}
+				<span class="inline-flex items-center px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800">
+					Country: {sd.countryName || sd.country}
+				</span>
+			{/if}
 			<span class="ml-auto text-xs text-muted-foreground">
 				Created: <DateDisplay value={sd.createdAt} />
 				&nbsp;•&nbsp;
@@ -1584,6 +1589,12 @@
 								<span class="capitalize">{sd.paymentMethod}</span>
 							</div>
 						{:else if serviceType === 'visa'}
+							{#if sd.countryName || sd.country}
+								<div class="flex justify-between border-b border-border/40 pb-1.5">
+									<span class="text-muted-foreground">Visa Country</span>
+									<span class="font-semibold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">{sd.countryName || sd.country}</span>
+								</div>
+							{/if}
 							<div class="flex justify-between border-b border-border/40 pb-1.5">
 								<span class="text-muted-foreground">Visa Package</span>
 								<span class="font-semibold">{sd.visaPackName}</span>

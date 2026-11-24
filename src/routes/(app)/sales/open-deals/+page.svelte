@@ -37,6 +37,8 @@
 		salesmanId: number;
 		salesmanName?: string | null;
 		mainDetails?: string | null;
+		countryName?: string | null;
+		country?: string | null;
 		payableAmount: number;
 		expectedSupplierCost: number;
 		expectedProfit: number;
@@ -101,6 +103,7 @@
 	let columns = $state<Record<string, { label: string; visible: boolean }>>({
 		id: { label: 'Document Ref', visible: true },
 		serviceType: { label: 'Service', visible: true },
+		country: { label: 'Country', visible: false },
 		headName: { label: 'Customer Head', visible: true },
 		salesmanName: { label: 'Salesman', visible: true },
 		mainDetails: { label: 'Specifications', visible: true },
@@ -205,6 +208,8 @@
 			const rows = items.map((row: any) => {
 				return activeKeys.map((k) => {
 					if (k === 'id') return row.documentNumber || `#${row.id}`;
+					if (k === 'country') return row.countryName || row.country || '';
+					if (k === 'mainDetails') return `${row.countryName || row.country ? 'Country: ' + (row.countryName || row.country) + ' - ' : ''}${row.mainDetails || ''}`;
 					if (k === 'payableAmount') return row.payableAmount != null ? Number(row.payableAmount).toFixed(3) : '0.000';
 					if (k === 'isDealClosed') return row.isDealClosed ? 'Closed' : 'Open Deal';
 					if (k === 'createdAt') return row.createdAt ? formatDateOnly(row.createdAt) : '';
@@ -362,7 +367,7 @@
 				<Search class="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
 				<input
 					type="text"
-					placeholder="Search Document Ref, Passenger, Route, Customer Head..."
+					placeholder="Search Document Ref, Country, Passenger, Route, Customer Head..."
 					value={searchVal}
 					oninput={(e) => handleSearchInput((e.target as HTMLInputElement).value)}
 					class="w-full text-xs pl-10 pr-4 py-2 border border-border rounded-xl bg-background text-foreground placeholder-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -487,6 +492,14 @@
 								{/if}
 							</th>
 						{/if}
+						{#if columns.country?.visible}
+							<th class="p-4 cursor-pointer hover:text-foreground select-none" onclick={() => handleSort('country')}>
+								Country
+								{#if sortBy === 'country'}
+									{sortDesc ? '↓' : '↑'}
+								{/if}
+							</th>
+						{/if}
 						{#if columns.headName?.visible}
 							<th class="p-4 cursor-pointer hover:text-foreground select-none" onclick={() => handleSort('headName')}>
 								Customer Head
@@ -560,6 +573,13 @@
 								</td>
 							{/if}
 
+							<!-- Country -->
+							{#if columns.country?.visible}
+								<td class="p-4 font-semibold text-foreground">
+									{row.countryName || row.country || '—'}
+								</td>
+							{/if}
+
 							<!-- Customer Head -->
 							{#if columns.headName?.visible}
 								<td class="p-4 font-semibold text-foreground">
@@ -581,8 +601,11 @@
 
 							<!-- Specifications -->
 							{#if columns.mainDetails?.visible}
-								<td class="p-4 text-muted-foreground max-w-xs truncate" title={row.mainDetails || ''}>
-									{row.mainDetails || '—'}
+								<td class="p-4 text-muted-foreground max-w-xs" title={row.mainDetails || ''}>
+									{#if row.countryName || row.country}
+										<span class="block text-foreground font-semibold text-xs mb-0.5">Country: <strong>{row.countryName || row.country}</strong></span>
+									{/if}
+									<span>{row.mainDetails || '—'}</span>
 								</td>
 							{/if}
 

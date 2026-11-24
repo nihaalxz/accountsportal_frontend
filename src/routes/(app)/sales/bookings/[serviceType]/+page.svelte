@@ -196,7 +196,7 @@
 					if (k === 'mainDetails') {
 						if (serviceType === 'flights') return `${row.passengerNames ? 'Pax: ' + row.passengerNames + ' - ' : ''}${row.fromLocation || ''} to ${row.toLocation || ''} (${row.passengerCount || 1} pax)`;
 						if (serviceType === 'hotels') return `Guest: ${row.guestName || ''} in ${row.country || ''}`;
-						if (serviceType === 'visa') return `${row.applicantNames ? 'Applicant: ' + row.applicantNames + ' - ' : ''}${row.visaPackName || ''} (${row.applicantCount || 1} applicants)`;
+						if (serviceType === 'visa') return `${row.countryName || row.country ? 'Country: ' + (row.countryName || row.country) + ' - ' : ''}${row.applicantNames ? 'Applicant: ' + row.applicantNames + ' - ' : ''}${row.visaPackName || ''} (${row.applicantCount || 1} applicants)`;
 						if (serviceType === 'vfs') return `Applicant: ${row.name || ''} - ${row.visaType || ''}`;
 						if (serviceType === 'holiday') return `Passenger: ${row.passengerName || ''} in ${row.country || ''}`;
 						if (serviceType === 'transportation') return `Passenger: ${row.name || ''} - ${row.pickup || ''} to ${row.drop || ''}`;
@@ -271,7 +271,7 @@
 				<Search class="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
 				<input
 					type="text"
-					placeholder="Search Document Ref, Passenger, Route, Customer Head..."
+					placeholder={serviceType === 'visa' ? "Search Document Ref, Country, Applicant, Customer Head..." : "Search Document Ref, Country, Passenger, Route, Customer Head..."}
 					value={searchVal}
 					oninput={(e) => handleSearchInput((e.target as HTMLInputElement).value)}
 					class="w-full text-xs pl-10 pr-4 py-2 border border-border rounded-xl bg-background text-foreground placeholder-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -448,6 +448,9 @@
 									{:else if serviceType === 'hotels'}
 										Guest: <strong>{row.guestName}</strong> • {row.country} ({row.days} days)
 									{:else if serviceType === 'visa'}
+										{#if row.countryName || row.country}
+											<span class="block text-foreground font-semibold text-xs mb-0.5">Country: <strong>{row.countryName || row.country}</strong></span>
+										{/if}
 										{#if row.applicantNames}
 											<span class="block text-foreground font-medium text-xs mb-0.5">Applicant: <strong>{row.applicantNames}</strong></span>
 										{/if}
