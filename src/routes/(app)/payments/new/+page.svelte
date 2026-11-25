@@ -1260,12 +1260,16 @@
 						/>
 					</div>
 					<div class="space-y-1.5">
-						<label for="salaryPaymentDate" class="font-semibold text-foreground">Payment Date</label>
+						<label for="salaryPaymentDate" class="font-semibold text-foreground flex items-center justify-between">
+							<span>Payment Date</span>
+							<span class="text-[10px] text-muted-foreground font-normal">(Today)</span>
+						</label>
 						<input
 							id="salaryPaymentDate"
 							type="date"
-							class="h-10 w-full bg-background border border-border rounded-xl px-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-foreground"
-							bind:value={salaryForm.paymentDate}
+							disabled
+							class="h-10 w-full bg-muted/40 border border-border rounded-xl px-3 text-xs text-muted-foreground cursor-not-allowed disabled:opacity-75 focus:outline-none"
+							value={salaryForm.paymentDate}
 						/>
 					</div>
 				</div>
@@ -1538,15 +1542,16 @@
 
 			{#if !isSupplierTransaction}
 				<div class="space-y-1.5">
-					<label for="expenseDate" class="font-semibold text-foreground">
-						Payment / Expense Date <span class="text-red-500">*</span>
+					<label for="expenseDate" class="font-semibold text-foreground flex items-center justify-between">
+						<span>Payment / Expense Date</span>
+						<span class="text-[10px] text-muted-foreground font-normal">(Auto-set to Today)</span>
 					</label>
 					<input
 						id="expenseDate"
 						type="date"
-						required
-						class="h-10 w-full bg-background border border-border rounded-xl px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 text-foreground"
-						bind:value={expenseDate}
+						disabled
+						class="h-10 w-full bg-muted/40 border border-border rounded-xl px-3 text-xs text-muted-foreground cursor-not-allowed disabled:opacity-75 focus:outline-none"
+						value={expenseDate}
 					/>
 				</div>
 			{/if}
