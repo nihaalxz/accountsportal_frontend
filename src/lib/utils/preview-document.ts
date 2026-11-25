@@ -1,4 +1,6 @@
 import { BACKEND_API_URL, SALES_PORTAL_API_URL } from '$lib/config';
+import { apiFetchBlob } from '$lib/api/api-client';
+import { toast } from '$lib/stores/toast';
 
 /**
  * Universal document preview and print helper.
@@ -21,6 +23,24 @@ export async function previewDocument(
 		baseUrl = BACKEND_API_URL || 'http://localhost:5028';
 		const id = typeof idOrFilters === 'number' || typeof idOrFilters === 'string' ? idOrFilters : (filters as any)?.id || '';
 		endpoint = `/api/sales-entries/quotations/${id}/pdf`;
+
+		const previewWin = window.open('', '_blank');
+		try {
+			const blob = await apiFetchBlob(endpoint, { baseUrl });
+			const blobUrl = URL.createObjectURL(blob);
+			if (previewWin && !previewWin.closed) {
+				previewWin.location.href = blobUrl;
+			} else {
+				window.open(blobUrl, '_blank');
+			}
+			setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+		} catch (err: any) {
+			if (previewWin && !previewWin.closed) {
+				previewWin.close();
+			}
+			toast.error(err?.message || 'Failed to open quotation PDF.');
+		}
+		return;
 	} else if (cleanType.includes('accounts-receipt')) {
 		baseUrl = BACKEND_API_URL || 'http://localhost:5028';
 		if (category === 'list' || category === 'report') {
