@@ -981,7 +981,7 @@
 										<td class="p-4 capitalize">
 											{PAYMENT_METHOD_LABELS[exp.paymentMethod] || exp.paymentMethod}
 										</td>
-										<td class="p-4">{new Date(exp.expenseDate).toLocaleDateString()}</td>
+										<td class="p-4">{exp.expenseDate ? formatDateOnly(exp.expenseDate) : '—'}</td>
 										<td class="p-4 text-right font-bold text-foreground">
 											<MoneyDisplay amount={exp.amount} />
 										</td>

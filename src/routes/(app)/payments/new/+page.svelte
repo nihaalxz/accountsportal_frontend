@@ -91,6 +91,7 @@
 	let sourceAccountIdVal = $state('');
 	let sourceBankIdVal = $state('');
 	let notes = $state('');
+	let expenseDate = $state(getBahrainDateString());
 
 	// Contra fields
 	let contraForm = $state({
@@ -125,7 +126,7 @@
 	// Salary Payout fields
 	let salaryProfiles = $state<SalaryProfile[]>([]);
 	let selectedSalaryProfileId = $state<number>(0);
-	const todayStr = new Date().toISOString().slice(0, 10);
+	const todayStr = getBahrainDateString();
 
 	let salaryForm = $state<CreateSalaryPaymentPayload>({
 		salaryProfileId: 0,
@@ -539,7 +540,7 @@
 				const payload: CreateSalaryPaymentPayload = {
 					...salaryForm,
 					status: targetStatus,
-					paymentDate: new Date().toISOString().slice(0, 10),
+					paymentDate: salaryForm.paymentDate || getBahrainDateString(),
 					cashAccountId: salaryForm.paymentMethod === 'Cash Account' ? salaryForm.cashAccountId : null,
 					bankAccountId: salaryForm.paymentMethod === 'Bank Account' ? salaryForm.bankAccountId : null
 				};
@@ -646,7 +647,7 @@
 				sourceAccountId,
 				sourceBankId,
 				notes: notes.trim() ? notes.trim() : null,
-				expenseDate: getBahrainDateString()
+				expenseDate: expenseDate || getBahrainDateString()
 			});
 
 			addToast('Financial transaction recorded successfully.', 'success');
@@ -1235,8 +1236,8 @@
 					</select>
 				</div>
 
-				<!-- Payroll Month & Year -->
-				<div class="grid grid-cols-2 gap-3">
+				<!-- Payroll Month, Year & Payment Date -->
+				<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 					<div class="space-y-1.5">
 						<label for="payrollMonth" class="font-semibold text-foreground">Payroll Month</label>
 						<select
@@ -1256,6 +1257,15 @@
 							type="number"
 							class="h-10 w-full bg-background border border-border rounded-xl px-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-foreground"
 							bind:value={salaryForm.payrollYear}
+						/>
+					</div>
+					<div class="space-y-1.5">
+						<label for="salaryPaymentDate" class="font-semibold text-foreground">Payment Date</label>
+						<input
+							id="salaryPaymentDate"
+							type="date"
+							class="h-10 w-full bg-background border border-border rounded-xl px-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 text-foreground"
+							bind:value={salaryForm.paymentDate}
 						/>
 					</div>
 				</div>
@@ -1525,6 +1535,21 @@
 					</div>
 				</div>
 			</div>
+
+			{#if !isSupplierTransaction}
+				<div class="space-y-1.5">
+					<label for="expenseDate" class="font-semibold text-foreground">
+						Payment / Expense Date <span class="text-red-500">*</span>
+					</label>
+					<input
+						id="expenseDate"
+						type="date"
+						required
+						class="h-10 w-full bg-background border border-border rounded-xl px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 text-foreground"
+						bind:value={expenseDate}
+					/>
+				</div>
+			{/if}
 
 			<!-- Dynamic Source / Destination Account Selectors -->
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">

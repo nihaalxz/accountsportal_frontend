@@ -24,12 +24,12 @@ export function parseDate(value: string | Date | null | undefined): Date | null 
 	const trimmed = value.trim();
 	if (!trimmed) return null;
 
-	// Case A: Date-only format 'YYYY-MM-DD'
-	if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-		const parts = trimmed.split('-');
-		const y = Number(parts[0] || '1970');
-		const m = Number(parts[1] || '1');
-		const d = Number(parts[2] || '1');
+	// Case A: Date-only format 'YYYY-MM-DD' or date with midnight time 'YYYY-MM-DD[T ]00:00:00'
+	const dateOnlyMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ]00:00:00(?:\.0+)?(?:Z|[+-]00:?00)?)?$/);
+	if (dateOnlyMatch) {
+		const y = Number(dateOnlyMatch[1] || '1970');
+		const m = Number(dateOnlyMatch[2] || '1');
+		const d = Number(dateOnlyMatch[3] || '1');
 		return new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
 	}
 

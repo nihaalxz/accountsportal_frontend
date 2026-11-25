@@ -11,6 +11,7 @@
 	import ErrorState from '$lib/components/ErrorState.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { formatDateOnly } from '$lib/formatters/date';
 	import { Wallet, Search, Filter, Plus } from 'lucide-svelte';
 
 	let expenses = $state<ExpenseResponse[]>([]);
@@ -191,7 +192,7 @@
 											exp.paymentMethod}
 									</td>
 									<td class="p-4"
-										>{new Date(exp.expenseDate).toLocaleDateString()}</td
+										>{exp.expenseDate ? formatDateOnly(exp.expenseDate) : '—'}</td
 									>
 									<td class="p-4 text-right font-bold text-foreground">
 										<MoneyDisplay amount={exp.amount} />

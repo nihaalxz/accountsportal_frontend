@@ -7,6 +7,7 @@
 	import type { ExpenseHeaderResponse } from '$features/expenses/types';
 	import { Button } from '$lib/components/ui/button';
 	import { addToast } from '$lib/stores/toast';
+	import { formatDateOnly } from '$lib/formatters/date';
 	import { ArrowLeft, Search, Layers, Clock, Check, X, AlertTriangle } from 'lucide-svelte';
 
 	interface PendingHeader {
@@ -394,7 +395,7 @@
 										{h.description || '—'}
 									</td>
 									<td class="p-3 text-muted-foreground font-mono text-[11px]">
-										{new Date(h.createdAt).toLocaleDateString()}
+										{h.createdAt ? formatDateOnly(h.createdAt) : '—'}
 									</td>
 									{#if hasRole('master_accountant')}
 										<td class="p-3 text-center">

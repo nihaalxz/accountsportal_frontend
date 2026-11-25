@@ -406,7 +406,7 @@
 	});
 </script>
 
-<div class="space-y-6">
+<div class="space-y-6 pnl-print-page">
 	<!-- Page Header -->
 	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 		<div class="flex flex-col gap-1">
@@ -1017,24 +1017,3 @@
 		{/if}
 	{/if}
 </div>
-
-<style>
-	@media print {
-		:global(body) {
-			background: white !important;
-			color: black !important;
-		}
-		:global(header),
-		:global(nav),
-		:global(aside),
-		button,
-		select,
-		input {
-			display: none !important;
-		}
-		.bg-card {
-			background: white !important;
-			border: 1px solid #e2e8f0 !important;
-		}
-	}
-</style>

@@ -29,6 +29,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import ConfirmationDialog from '$lib/components/ConfirmationDialog.svelte';
 	import { addToast } from '$lib/stores/toast';
+	import { formatDateOnly } from '$lib/formatters/date';
 	import { ArrowLeft, Check, X, Send } from 'lucide-svelte';
 
 	const id = $page.params.id ? parseInt($page.params.id) : 0;
@@ -330,9 +331,7 @@
 						<div class="space-y-1">
 							<span class="text-muted-foreground font-semibold">Expense Date</span>
 							<p class="font-bold text-foreground">
-								{new Date(expense.expenseDate).toLocaleDateString(undefined, {
-									dateStyle: 'full'
-								})}
+								{expense.expenseDate ? formatDateOnly(expense.expenseDate) : '—'}
 							</p>
 						</div>
 					</div>
