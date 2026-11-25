@@ -126,6 +126,8 @@
 	let profitRecordsData = $state<SalesmanProfitRecord[]>([]);
 	let profitRecordsLoading = $state(false);
 	let profitRecordsError = $state<string | null>(null);
+	type ProfitDealStatusFilter = 'all' | 'open' | 'closed';
+	let profitDealStatusFilter = $state<ProfitDealStatusFilter>('all');
 
 	// Date filtering states
 	let startDate = $state('');
@@ -395,6 +397,7 @@
 
 	function switchToProfit(salesmanId: number) {
 		expandedTab = 'profit';
+		profitDealStatusFilter = 'all';
 		loadProfitRecords(salesmanId);
 	}
 
@@ -425,6 +428,7 @@
 			expandedSalesmanId = null;
 			entriesData = [];
 			individualSearch = '';
+			profitDealStatusFilter = 'all';
 			indSalesmanReport = null;
 		} else {
 			expandedSalesmanId = id;
@@ -432,6 +436,7 @@
 			entriesServiceType = 'flights';
 			entriesData = [];
 			individualSearch = '';
+			profitDealStatusFilter = 'all';
 			indSalesmanReport = null;
 			indStartDate = startDate;
 			indEndDate = endDate;
@@ -516,7 +521,7 @@
 		});
 	});
 
-	const filteredProfitRecordsData = $derived.by(() => {
+	const dateAndSearchFilteredProfitRecords = $derived.by(() => {
 		let list = profitRecordsData;
 
 		// Apply individual date filter client-side as well
@@ -544,6 +549,16 @@
 			const pType = formatProfitType(row.profitType).toLowerCase();
 			return docNo.includes(q) || type.includes(q) || src.includes(q) || pType.includes(q);
 		});
+	});
+
+	const filteredProfitRecordsData = $derived.by(() => {
+		if (profitDealStatusFilter === 'open') {
+			return dateAndSearchFilteredProfitRecords.filter((row: SalesmanProfitRecord) => !row.isFinal);
+		}
+		if (profitDealStatusFilter === 'closed') {
+			return dateAndSearchFilteredProfitRecords.filter((row: SalesmanProfitRecord) => !!row.isFinal);
+		}
+		return dateAndSearchFilteredProfitRecords;
 	});
 
 	// ─── CSV/PDF Exports ─────────────────────────────────────────────────────────
@@ -575,12 +590,11 @@
 
 	function handleExportIndividualCSV(s: SalesmanReportResponse) {
 		if (expandedTab === 'profit') {
-			const recordsToExport = (filteredProfitRecordsData && filteredProfitRecordsData.length > 0)
-				? filteredProfitRecordsData
-				: profitRecordsData;
+			const hasActiveFilter = Boolean(individualSearch.trim() || indStartDate || indEndDate || profitDealStatusFilter !== 'all');
+			const recordsToExport = hasActiveFilter ? filteredProfitRecordsData : profitRecordsData;
 
 			if (recordsToExport.length === 0) {
-				toast.info('No profit records available to export.');
+				toast.info(hasActiveFilter ? 'No profit records matching current filters to export.' : 'No profit records available to export.');
 				return;
 			}
 
@@ -664,8 +678,9 @@
 				''
 			]);
 
+			const statusSuffix = profitDealStatusFilter !== 'all' ? `_${profitDealStatusFilter}_deals` : '';
 			downloadCSV(
-				`salesman_${s.name.replace(/\s+/g, '_').toLowerCase()}_profit_records_${indStartDate || 'all'}_to_${indEndDate || 'all'}.csv`,
+				`salesman_${s.name.replace(/\s+/g, '_').toLowerCase()}_profit_records${statusSuffix}_${indStartDate || 'all'}_to_${indEndDate || 'all'}.csv`,
 				headers,
 				rows
 			);
@@ -1485,16 +1500,70 @@
 															<p class="font-semibold text-foreground text-xs">No Profit Records Found</p>
 															<p class="text-[11px]">No profit records exist in Sales Portal database for {s.name} matching selected filters.</p>
 														</div>
-													{:else if filteredProfitRecordsData.length === 0}
-														<div class="p-8 text-center text-muted-foreground bg-muted/10 rounded-xl border border-dashed border-border/80 space-y-2">
-															<p class="font-semibold text-foreground text-xs">No Matching Profit Records</p>
-															<p class="text-[11px]">No profit records found matching "<strong>{individualSearch}</strong>".</p>
-															<Button variant="outline" size="sm" class="h-7 text-xs cursor-pointer" onclick={() => individualSearch = ''}>
-																Clear Search
-															</Button>
-														</div>
 													{:else}
-														<!-- Profit Records Stat Bar -->
+														{@const openStatusCount = dateAndSearchFilteredProfitRecords.filter(r => !r.isFinal).length}
+														{@const closedStatusCount = dateAndSearchFilteredProfitRecords.filter(r => r.isFinal).length}
+
+														<!-- Deal Status Filter Bar -->
+														<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-muted/20 border border-border/60 rounded-xl text-xs">
+															<div class="flex items-center gap-2 flex-wrap">
+																<span class="text-[11px] font-bold text-foreground">Deal Status:</span>
+																<div class="flex items-center gap-1 flex-wrap">
+																	<button
+																		type="button"
+																		onclick={() => profitDealStatusFilter = 'all'}
+																		class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer {profitDealStatusFilter === 'all' ? 'bg-primary text-primary-foreground border-primary shadow-xs' : 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+																	>
+																		<span>All</span>
+																		<span class="font-mono text-[10px] opacity-80">({dateAndSearchFilteredProfitRecords.length})</span>
+																	</button>
+																	<button
+																		type="button"
+																		onclick={() => profitDealStatusFilter = 'open'}
+																		class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer {profitDealStatusFilter === 'open' ? 'bg-amber-600 text-white border-amber-600 shadow-xs' : 'border-border bg-background hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 dark:hover:bg-amber-950/30 dark:hover:text-amber-400 text-muted-foreground'}"
+																	>
+																		<span>Open Deal</span>
+																		<span class="font-mono text-[10px] opacity-80">({openStatusCount})</span>
+																	</button>
+																	<button
+																		type="button"
+																		onclick={() => profitDealStatusFilter = 'closed'}
+																		class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer {profitDealStatusFilter === 'closed' ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'border-border bg-background hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-400 text-muted-foreground'}"
+																	>
+																		<span>Closed Deal</span>
+																		<span class="font-mono text-[10px] opacity-80">({closedStatusCount})</span>
+																	</button>
+																</div>
+															</div>
+															{#if profitDealStatusFilter !== 'all'}
+																<button
+																	type="button"
+																	onclick={() => profitDealStatusFilter = 'all'}
+																	class="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
+																>
+																	<X class="h-3 w-3" />
+																	<span>Show All</span>
+																</button>
+															{/if}
+														</div>
+
+														{#if filteredProfitRecordsData.length === 0}
+															<div class="p-8 text-center text-muted-foreground bg-muted/10 rounded-xl border border-dashed border-border/80 space-y-2">
+																<p class="font-semibold text-foreground text-xs">No Matching Profit Records</p>
+																<p class="text-[11px]">
+																	No {profitDealStatusFilter === 'open' ? 'Open Deal ' : profitDealStatusFilter === 'closed' ? 'Closed Deal ' : ''}profit records found{individualSearch.trim() ? ` matching "${individualSearch}"` : ''}.
+																</p>
+																<Button
+																	variant="outline"
+																	size="sm"
+																	class="h-7 text-xs cursor-pointer"
+																	onclick={() => { individualSearch = ''; profitDealStatusFilter = 'all'; }}
+																>
+																	Clear Filters
+																</Button>
+															</div>
+														{:else}
+															<!-- Profit Records Stat Bar -->
 														{@const openDealsList = filteredProfitRecordsData.filter(r => !r.isFinal)}
 														{@const closedDealsList = filteredProfitRecordsData.filter(r => r.isFinal)}
 														{@const openDealsProfit = openDealsList.reduce((acc, r) => acc + (r.profitAmount || 0), 0)}
@@ -1609,6 +1678,7 @@
 														<p class="text-[10px] text-muted-foreground text-right pt-1">
 															Showing {filteredProfitRecordsData.length}{filteredProfitRecordsData.length !== profitRecordsData.length ? ` of ${profitRecordsData.length}` : ''} profit records fetched from Sales Portal DB
 														</p>
+														{/if}
 													{/if}
 												{/if}
 
