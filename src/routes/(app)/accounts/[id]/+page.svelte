@@ -21,6 +21,7 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import ConflictDialog from '$lib/components/ConflictDialog.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
 	import { addToast } from '$lib/stores/toast';
 	import { formatDateOnly, getBahrainDateString, getBahrainPresetRanges } from '$lib/formatters/date';
 	import { resolveStatementTransactionType, getStatementTypeBadge } from '$lib/utils/statement-classifier';
@@ -36,7 +37,10 @@
 		Landmark,
 		FileSpreadsheet,
 		FileDown,
-		Receipt
+		Receipt,
+		Calendar,
+		Search,
+		X
 	} from 'lucide-svelte';
 	import { DateDisplay } from '$lib/components';
 
@@ -50,15 +54,72 @@
 	let errorMsg = $state<string | null>(null);
 	let correlationId = $state('');
 
+	// Date filtering & Search state (defaults to 'all' matching Banks)
+	let startDate = $state('');
+	let endDate = $state('');
+	let activePreset = $state<'all' | 'today' | 'this_month' | 'last_30' | 'this_year'>('all');
+	let searchQuery = $state('');
+
+	function formatDateForInput(d: Date): string {
+		const year = d.getFullYear();
+		const month = String(d.getMonth() + 1).padStart(2, '0');
+		const day = String(d.getDate()).padStart(2, '0');
+		return `${year}-${month}-${day}`;
+	}
+
+	function applyPreset(preset: 'all' | 'today' | 'this_month' | 'last_30' | 'this_year') {
+		activePreset = preset;
+		const now = new Date();
+		if (preset === 'today') {
+			const todayStr = formatDateForInput(now);
+			startDate = todayStr;
+			endDate = todayStr;
+		} else if (preset === 'this_month') {
+			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+			startDate = formatDateForInput(startOfMonth);
+			endDate = formatDateForInput(now);
+		} else if (preset === 'last_30') {
+			const past30 = new Date();
+			past30.setDate(now.getDate() - 30);
+			startDate = formatDateForInput(past30);
+			endDate = formatDateForInput(now);
+		} else if (preset === 'this_year') {
+			const startOfYear = new Date(now.getFullYear(), 0, 1);
+			startDate = formatDateForInput(startOfYear);
+			endDate = formatDateForInput(now);
+		} else {
+			startDate = '';
+			endDate = '';
+		}
+	}
+
+	function resetFilters() {
+		startDate = '';
+		endDate = '';
+		searchQuery = '';
+		activePreset = 'all';
+	}
+
 	const filteredTransactions = $derived.by(() => {
 		let list = transactions;
 		if (startDate) {
 			const start = new Date(startDate + 'T00:00:00').getTime();
-			list = list.filter(t => new Date(t.createdAt).getTime() >= start);
+			list = list.filter((t) => new Date(t.createdAt).getTime() >= start);
 		}
 		if (endDate) {
 			const end = new Date(endDate + 'T23:59:59').getTime();
-			list = list.filter(t => new Date(t.createdAt).getTime() <= end);
+			list = list.filter((t) => new Date(t.createdAt).getTime() <= end);
+		}
+		if (searchQuery.trim()) {
+			const q = searchQuery.trim().toLowerCase();
+			list = list.filter(
+				(t) =>
+					(t.documentNumber && t.documentNumber.toLowerCase().includes(q)) ||
+					(t.displayNarrative && t.displayNarrative.toLowerCase().includes(q)) ||
+					(t.displayDescription && t.displayDescription.toLowerCase().includes(q)) ||
+					(t.description && t.description.toLowerCase().includes(q)) ||
+					(t.referenceId && String(t.referenceId).toLowerCase().includes(q))
+			);
 		}
 		return list;
 	});
@@ -68,26 +129,33 @@
 		const currentAccount = account;
 		if (!currentAccount) return [];
 		let bal = currentAccount.balance;
-		const mapped = transactions.map(t => {
+		const mapped = transactions.map((t) => {
 			const isDebit = t.destinationAccountId === currentAccount.id;
 			const debit = isDebit ? t.amount : 0;
 			const credit = !isDebit ? t.amount : 0;
-			bal += (debit - credit);
+			bal += debit - credit;
 			const txType = resolveStatementTransactionType(t, false, currentAccount.id);
 			return { t, debit, credit, bal, txType };
 		});
-		
-		const filteredIds = new Set(filteredTransactions.map(x => x.id));
-		return mapped.filter(row => filteredIds.has(row.t.id));
+
+		const filteredIds = new Set(filteredTransactions.map((x) => x.id));
+		return mapped.filter((row) => filteredIds.has(row.t.id));
 	});
 
-	// Date range selectors (defaults to current month)
-	const { thisMonth } = getBahrainPresetRanges();
-	const firstDay = thisMonth.startDate;
-	const today = thisMonth.endDate;
-
-	let startDate = $state(firstDay);
-	let endDate = $state(today);
+	const filterSummary = $derived.by(() => {
+		let totalDebit = 0;
+		let totalCredit = 0;
+		for (const r of statementRows) {
+			totalDebit += r.debit;
+			totalCredit += r.credit;
+		}
+		return {
+			totalDebit,
+			totalCredit,
+			netChange: totalDebit - totalCredit,
+			count: statementRows.length
+		};
+	});
 
 	// Balance correction modal state
 	let correctionOpen = $state(false);
@@ -226,21 +294,36 @@
 		const currentAccount = account;
 		const rowsData = statementRows;
 		if (!currentAccount || rowsData.length === 0) return;
-		const headers = ['ID', 'Date', 'Description', 'Type', 'Debit (BHD)', 'Credit (BHD)', 'Balance (BHD)', 'Reference'];
-		
+		const headers = [
+			'ID',
+			'Date',
+			'Description',
+			'Type',
+			'Debit (BHD)',
+			'Credit (BHD)',
+			'Balance (BHD)',
+			'Reference'
+		];
+
 		const rows = rowsData.map((row) => [
 			row.t.documentNumber,
 			row.t.createdAt ? formatDateOnly(row.t.createdAt) : '',
-			row.t.displayDescription || row.t.description || '',
+			row.t.displayNarrative || row.t.displayDescription || row.t.description || '',
 			row.txType,
 			row.debit > 0 ? row.debit : '',
 			row.credit > 0 ? row.credit : '',
 			row.bal,
 			row.t.referenceId ? `${row.t.referenceType ?? ''} #${row.t.referenceId}` : ''
 		]);
-		
+
 		const sanitizedName = currentAccount.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-		downloadCSV(`statement_${sanitizedName}_${getBahrainDateString()}.csv`, headers, rows);
+		const dateSuffix =
+			startDate || endDate ? `_${startDate || 'start'}_to_${endDate || 'end'}` : '';
+		downloadCSV(
+			`statement_${sanitizedName}${dateSuffix}_${getBahrainDateString()}.csv`,
+			headers,
+			rows
+		);
 		addToast('CSV statement exported successfully.', 'success');
 	}
 
@@ -392,97 +475,202 @@
 					<span>Cash Account Statement</span>
 				</h2>
 
-				<!-- Date filtering form -->
-				<div class="flex flex-wrap items-center gap-2 text-xs">
-					{#if transactions.length > 0}
+				{#if statementRows.length > 0}
+					<div class="flex gap-2">
 						<Button
 							variant="outline"
-							class="h-7.5 text-[11px] font-semibold rounded-lg flex items-center gap-1 cursor-pointer mr-1"
+							class="h-7.5 text-[11px] font-semibold rounded-lg flex items-center gap-1 cursor-pointer"
 							onclick={handleExportCSV}
 						>
 							<FileSpreadsheet class="h-3.5 w-3.5" /> Export CSV
 						</Button>
 						<Button
 							variant="outline"
-							class="h-7.5 text-[11px] font-semibold rounded-lg flex items-center gap-1 cursor-pointer mr-3"
+							class="h-7.5 text-[11px] font-semibold rounded-lg flex items-center gap-1 cursor-pointer"
 							onclick={handleExportPDF}
 						>
 							<FileDown class="h-3.5 w-3.5" /> Export PDF
 						</Button>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Filtering toolbar -->
+			<div class="bg-card border border-border p-4 rounded-2xl space-y-3 shadow-xs">
+				<!-- Quick Date Presets -->
+				<div
+					class="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 pb-3"
+				>
+					<div class="flex flex-wrap items-center gap-1.5 text-xs">
+						<span class="text-xs font-medium text-muted-foreground mr-1 flex items-center gap-1">
+							<Calendar class="h-3.5 w-3.5" /> Filter Range:
+						</span>
+						<button
+							type="button"
+							onclick={() => applyPreset('all')}
+							class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer {activePreset ===
+								'all' &&
+							!startDate &&
+							!endDate
+								? 'bg-primary text-primary-foreground border-primary'
+								: 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+						>
+							All Time
+						</button>
+						<button
+							type="button"
+							onclick={() => applyPreset('today')}
+							class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer {activePreset ===
+							'today'
+								? 'bg-primary text-primary-foreground border-primary'
+								: 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+						>
+							Today
+						</button>
+						<button
+							type="button"
+							onclick={() => applyPreset('this_month')}
+							class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer {activePreset ===
+							'this_month'
+								? 'bg-primary text-primary-foreground border-primary'
+								: 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+						>
+							This Month
+						</button>
+						<button
+							type="button"
+							onclick={() => applyPreset('last_30')}
+							class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer {activePreset ===
+							'last_30'
+								? 'bg-primary text-primary-foreground border-primary'
+								: 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+						>
+							Last 30 Days
+						</button>
+						<button
+							type="button"
+							onclick={() => applyPreset('this_year')}
+							class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer {activePreset ===
+							'this_year'
+								? 'bg-primary text-primary-foreground border-primary'
+								: 'border-border bg-background hover:bg-muted text-muted-foreground'}"
+						>
+							This Year
+						</button>
+					</div>
+
+					{#if startDate || endDate || searchQuery}
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={resetFilters}
+							class="h-7 text-xs rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
+						>
+							<X class="h-3.5 w-3.5 mr-1" /> Reset Filters
+						</Button>
 					{/if}
-					<input
-						type="date"
-						bind:value={startDate}
-						disabled={loadingReport}
-						class="p-1.5 rounded-lg border border-border bg-background focus:outline-none"
-					/>
-					<span class="text-muted-foreground">to</span>
-					<input
-						type="date"
-						bind:value={endDate}
-						disabled={loadingReport}
-						class="p-1.5 rounded-lg border border-border bg-background focus:outline-none"
-					/>
-					<Button
-						variant="outline"
-						class="p-2 h-7.5 rounded-lg cursor-pointer"
-						onclick={loadAccountTransactions}
-						disabled={loadingReport}
-					>
-						<RefreshCw
-							class={['h-3 w-3', loadingReport ? 'animate-spin' : ''].join(' ')}
-						/>
-					</Button>
 				</div>
+
+				<!-- Date Range inputs & Text search -->
+				<div
+					class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs"
+				>
+					<!-- Search -->
+					<div class="relative flex-1">
+						<Search
+							class="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"
+						/>
+						<Input
+							type="text"
+							placeholder="Search by ID, narrative, description, ref..."
+							bind:value={searchQuery}
+							class="pl-9 h-9 text-xs rounded-xl"
+						/>
+					</div>
+
+					<!-- Date range -->
+					<div class="flex items-center gap-2">
+						<div class="flex items-center gap-1.5">
+							<span class="text-muted-foreground font-medium text-[11px]">From:</span>
+							<Input
+								type="date"
+								bind:value={startDate}
+								onchange={() => (activePreset = 'all')}
+								class="h-9 text-xs rounded-xl w-36"
+							/>
+						</div>
+						<span class="text-muted-foreground font-semibold">to</span>
+						<div class="flex items-center gap-1.5">
+							<span class="text-muted-foreground font-medium text-[11px]">To:</span>
+							<Input
+								type="date"
+								bind:value={endDate}
+								onchange={() => (activePreset = 'all')}
+								class="h-9 text-xs rounded-xl w-36"
+							/>
+						</div>
+						<Button
+							variant="outline"
+							class="p-2 h-9 rounded-xl cursor-pointer"
+							onclick={loadAccountTransactions}
+							disabled={loadingReport}
+							title="Refresh statement"
+						>
+							<RefreshCw
+								class={['h-3.5 w-3.5', loadingReport ? 'animate-spin' : ''].join(' ')}
+							/>
+						</Button>
+					</div>
+				</div>
+
+				<!-- Filter summary statistics -->
+				{#if startDate || endDate || searchQuery}
+					<div
+						class="flex flex-wrap items-center justify-between text-xs pt-2 border-t border-border/40 text-muted-foreground"
+					>
+						<div>
+							Showing <strong>{filterSummary.count}</strong> of {transactions.length} entries
+							{#if startDate || endDate}
+								<span>({startDate || 'Start'} &rarr; {endDate || 'Present'})</span>
+							{/if}
+						</div>
+						<div class="flex gap-4 font-mono text-[11px]">
+							<span class="text-emerald-600 font-semibold"
+								>Total Receipts: <MoneyDisplay amount={filterSummary.totalDebit} /></span
+							>
+							<span class="text-red-600 font-semibold"
+								>Total Outflows: <MoneyDisplay amount={filterSummary.totalCredit} /></span
+							>
+							<span class="font-bold text-foreground"
+								>Net Change: <MoneyDisplay amount={filterSummary.netChange} /></span
+							>
+						</div>
+					</div>
+				{/if}
 			</div>
 
 			{#if loadingReport}
-				<FinancialTableSkeleton rows={4} columns={8} />
-			{:else if statementRows.length === 0}
-				<EmptyState
-					title="No transactions found"
-					description="There are no entries recorded in the selected date range."
-					icon={Landmark}
-				/>
-			{:else}
-				<!-- Ledger Summary Info -->
-				{@const summary = (() => {
-					const rows = statementRows;
-					const totalDebits = rows.reduce((sum: number, row: any) => sum + row.debit, 0);
-					const totalCredits = rows.reduce((sum: number, row: any) => sum + row.credit, 0);
-					const currentAccount = account;
-					const opBal = currentAccount ? currentAccount.balance : 0;
-					const edBal = currentAccount ? currentAccount.currentBalance : 0;
-					return { opBal, totalDebits, totalCredits, edBal };
-				})()}
-				<div
-					class="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-muted/15 p-4 rounded-2xl border border-border/50 text-xs"
-				>
-					<div>
-						<span class="text-muted-foreground block">Opening Bal</span>
-						<span class="font-bold"
-							><MoneyDisplay amount={summary.opBal} /></span
-						>
-					</div>
-					<div>
-						<span class="text-primary block">Total Debits</span>
-						<span class="font-bold text-emerald-600"
-							><MoneyDisplay amount={summary.totalDebits} /></span
-						>
-					</div>
-					<div>
-						<span class="text-primary block">Total Credits</span>
-						<span class="font-bold text-red-600"
-							><MoneyDisplay amount={summary.totalCredits} /></span
-						>
-					</div>
-					<div>
-						<span class="text-muted-foreground block">Ending Bal</span>
-						<span class="font-bold"
-							><MoneyDisplay amount={summary.edBal} /></span
-						>
-					</div>
+				<div class="space-y-3">
+					<div class="h-10 bg-muted rounded-xl animate-pulse"></div>
+					<div class="h-24 bg-muted rounded-xl animate-pulse"></div>
 				</div>
+			{:else if statementRows.length === 0}
+				<div
+					class="text-center p-8 bg-card border border-border rounded-2xl text-xs text-muted-foreground space-y-2"
+				>
+					<p class="font-medium">No transactions found matching the selected filter criteria.</p>
+					{#if startDate || endDate || searchQuery}
+						<Button
+							variant="outline"
+							size="sm"
+							onclick={resetFilters}
+							class="h-7 rounded-lg text-xs cursor-pointer"
+						>
+							Clear Filters
+						</Button>
+					{/if}
+				</div>
+			{:else}
 
 				<!-- Ledger Postings Table -->
 				<div class="bg-card border border-border rounded-2xl overflow-hidden shadow-xs">
